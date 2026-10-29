@@ -86,6 +86,33 @@ sheet** rewrites them all.
 
 ---
 
+## Turning on accounts + saved datasets (Supabase)
+
+Optional. Without it the app is guest-only: datasets live in memory and are lost
+on restart. With Supabase, signed-in users get their datasets saved to Postgres
+(per-user, Row-Level Security) and a **My datasets** list to reopen them. Guests
+keep working unchanged.
+
+1. Create a Supabase project.
+2. In the **SQL Editor**, run [`supabase/schema.sql`](supabase/schema.sql) (creates the
+   `datasets` and `reviews` tables + RLS policies; safe to re-run).
+3. In **Project Settings → API**, copy into `.env`:
+   ```
+   SUPABASE_URL=https://xxxx.supabase.co
+   SUPABASE_ANON_KEY=eyJ...        # browser-safe
+   SUPABASE_SERVICE_ROLE_KEY=eyJ...# secret, server-only
+   ```
+4. **Email/password** works out of the box. For **Google sign-in**: Supabase
+   dashboard → Authentication → Providers → Google → enable and add your Google
+   OAuth client ID/secret, and add `http://localhost:3000/app` (and your prod URL)
+   to the redirect allow-list.
+5. `npm start` — the header now shows **Sign in**; the startup log reads
+   `Accounts: enabled`.
+
+The anon key is sent to the browser by design (it only grants what RLS allows).
+The service-role key is used server-side only (to verify tokens) and is never
+sent to the client.
+
 ## Architecture
 
 ```

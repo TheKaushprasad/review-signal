@@ -1,8 +1,10 @@
 import { Router } from 'express';
 import { csvToRecords, guessTextColumn, guessColumn, recordsToCSV } from '../lib/csv.js';
 import { classifyReviews, activeEngine } from '../classifiers/index.js';
-import { createDataset, getDataset, updateReview } from '../lib/store.js';
-import { sheetsEnabled } from '../config.js';
+import { createDataset, putDataset, getDataset, updateReview } from '../lib/store.js';
+import { saveDataset, loadDataset, listDatasets, updateReviewDb, deleteDataset } from '../lib/db.js';
+import { sheetsEnabled, supabaseEnabled, config } from '../config.js';
+import { requireAuth } from '../lib/auth.js';
 import {
   readSheet, writeAllClassification, writeOneClassification, CLASS_HEADERS,
 } from '../sheets/sheets.js';
@@ -36,9 +38,36 @@ function buildReviews(headers, rows, textColumn) {
     .filter(r => r.text !== '');
 }
 
-router.get('/health', (req, res) => {
-  res.json({ engine: activeEngine(), sheetsEnabled });
+// Public runtime config for the browser (anon key is browser-safe).
+router.get('/config', (req, res) => {
+  res.json({
+    engine: activeEngine(),
+    sheetsEnabled,
+    supabase: supabaseEnabled
+      ? { enabled: true, url: config.supabase.url, anonKey: config.supabase.anonKey }
+      : { enabled: false },
+  });
 });
+
+router.get('/health', (req, res) => {
+  res.json({ engine: activeEngine(), sheetsEnabled, supabaseEnabled, signedIn: Boolean(req.user) });
+});
+
+// Persist for a signed-in user (best effort), else keep in memory. Responds.
+async function finishDataset(req, res, { name, source, reviews, wroteBack }) {
+  if (req.user && supabaseEnabled) {
+    try {
+      const saved = await saveDataset(req.accessToken, req.user.id, { name, engine: activeEngine(), source, reviews });
+      const ds = putDataset({ id: saved.id, name, source, reviews: saved.reviews, userId: req.user.id, persisted: true, createdAt: saved.createdAt });
+      return res.json(serializeDataset(ds, { wroteBack, saved: true }));
+    } catch (err) {
+      const ds = createDataset({ name, source, reviews });
+      return res.json(serializeDataset(ds, { wroteBack, saved: false, saveError: err.message }));
+    }
+  }
+  const ds = createDataset({ name, source, reviews });
+  return res.json(serializeDataset(ds, { wroteBack, saved: false }));
+}
 
 // Create a dataset from a CSV upload or a Google Sheet.
 router.post('/datasets', async (req, res) => {
@@ -55,12 +84,11 @@ router.post('/datasets', async (req, res) => {
       let reviews = buildReviews(headers, rows, col);
       if (!reviews.length) return res.status(400).json({ error: `No non-empty reviews found in column "${col}".` });
       reviews = await classifyReviews(reviews);
-      const ds = createDataset({
+      return finishDataset(req, res, {
         name: filename || 'Uploaded CSV',
-        source: { type: 'csv', headers, textColumn: col },
-        reviews,
+        source: { type: 'csv', textColumn: col },
+        reviews, wroteBack: false,
       });
-      return res.json(serializeDataset(ds, { wroteBack: false }));
     }
 
     if (kind === 'sheet') {
@@ -75,22 +103,19 @@ router.post('/datasets', async (req, res) => {
       if (!reviews.length) return res.status(400).json({ error: `No non-empty reviews found in column "${col}".` });
       reviews = await classifyReviews(reviews);
 
-      // Re-classifying a sheet that already has our columns must overwrite that
-      // block, not append a new one. Reuse an existing block's position if found.
       const classStartColIndex = findClassBlock(headers);
       const source = {
-        type: 'sheet', spreadsheetId, sheetName: resolved, headers, textColumn: col,
+        type: 'sheet', spreadsheetId, sheetName: resolved, textColumn: col,
         classStartColIndex, writeBack: Boolean(writeBack),
         url: `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`,
       };
-      const ds = createDataset({ name: `${resolved} (Google Sheet)`, source, reviews });
 
       let wroteBack = false;
       if (writeBack) {
         await writeAllClassification(spreadsheetId, resolved, classStartColIndex, reviews);
         wroteBack = true;
       }
-      return res.json(serializeDataset(ds, { wroteBack }));
+      return finishDataset(req, res, { name: `${resolved} (Google Sheet)`, source, reviews, wroteBack });
     }
 
     return res.status(400).json({ error: 'kind must be "csv" or "sheet".' });
@@ -100,34 +125,74 @@ router.post('/datasets', async (req, res) => {
   }
 });
 
-router.get('/datasets/:id', (req, res) => {
-  const ds = getDataset(req.params.id);
+// Return a dataset from the in-session cache, hydrating from Supabase if the
+// user owns a persisted one that isn't cached yet.
+async function getOrHydrate(req, id) {
+  const mem = getDataset(id);
+  if (mem) {
+    // A persisted dataset is owned — only its owner may read it from the cache.
+    // Anyone else falls through to the DB, where RLS returns nothing.
+    if (!mem.persisted) return mem;
+    if (req.user && mem.userId === req.user.id) return mem;
+  }
+  if (req.user && supabaseEnabled) {
+    const ds = await loadDataset(req.accessToken, id);
+    if (ds) { putDataset(ds); return ds; }
+  }
+  return null;
+}
+
+// List the signed-in user's saved datasets.
+router.get('/my/datasets', requireAuth, async (req, res) => {
+  try {
+    res.json({ datasets: await listDatasets(req.accessToken) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/my/datasets/:id', requireAuth, async (req, res) => {
+  try {
+    await deleteDataset(req.accessToken, req.params.id);
+    res.json({ deleted: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/datasets/:id', async (req, res) => {
+  const ds = await getOrHydrate(req, req.params.id);
   if (!ds) return res.status(404).json({ error: 'Dataset not found.' });
   res.json(serializeDataset(ds, {}));
 });
 
-// Edit a single review and (for sheet-backed datasets) write it back.
+// Edit a single review: update the cache, persist to the DB (if owned), and
+// write back to the sheet (if sheet-backed).
 router.patch('/datasets/:id/reviews/:rid', async (req, res) => {
-  const ds = getDataset(req.params.id);
+  const ds = await getOrHydrate(req, req.params.id);
   if (!ds) return res.status(404).json({ error: 'Dataset not found.' });
   const review = updateReview(ds.id, req.params.rid, req.body || {});
   if (!review) return res.status(404).json({ error: 'Review not found.' });
+
+  let saved = null, saveError = null;
+  if (ds.persisted && req.user) {
+    try { await updateReviewDb(req.accessToken, review.id, req.body || {}); saved = true; }
+    catch (err) { saved = false; saveError = err.message; }
+  }
 
   let synced = false, syncError = null;
   if (ds.source.type === 'sheet' && ds.source.writeBack) {
     try {
       await writeOneClassification(ds.source.spreadsheetId, ds.source.sheetName, ds.source.classStartColIndex, review);
       synced = true;
-    } catch (err) {
-      syncError = err.message;
-    }
+    } catch (err) { syncError = err.message; }
   }
-  res.json({ review, synced, syncError });
+  res.json({ review, synced, syncError, saved, saveError });
 });
 
 // Push every current classification to the sheet.
 router.post('/datasets/:id/writeback', async (req, res) => {
-  const ds = getDataset(req.params.id);
+  const ds = await getOrHydrate(req, req.params.id);
   if (!ds) return res.status(404).json({ error: 'Dataset not found.' });
   if (ds.source.type !== 'sheet') return res.status(400).json({ error: 'This dataset is not backed by a Google Sheet.' });
   try {
@@ -139,8 +204,8 @@ router.post('/datasets/:id/writeback', async (req, res) => {
 });
 
 // Export the classified dataset as a CSV download.
-router.get('/datasets/:id/export', (req, res) => {
-  const ds = getDataset(req.params.id);
+router.get('/datasets/:id/export', async (req, res) => {
+  const ds = await getOrHydrate(req, req.params.id);
   if (!ds) return res.status(404).json({ error: 'Dataset not found.' });
   const headers = ['author', 'date', 'review', ...CLASS_HEADERS];
   const records = ds.reviews.map(r => ({
@@ -159,6 +224,7 @@ function serializeDataset(ds, extra) {
     datasetId: ds.id,
     name: ds.name,
     engine: activeEngine(),
+    persisted: Boolean(ds.persisted),
     source: {
       type: ds.source.type,
       textColumn: ds.source.textColumn,

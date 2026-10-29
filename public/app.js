@@ -10,9 +10,11 @@ let dataset = null;                         // { datasetId, source, reviews, eng
 const filters = { senti: 'all', q: '', sort: 'nps', cat: null };
 
 /* ---------- helpers ---------- */
-function api(path, opts) {
+async function api(path, opts = {}) {
+  const auth = await authHeader();
   return fetch('/api' + path, {
-    headers: { 'Content-Type': 'application/json' }, ...opts,
+    ...opts,
+    headers: { 'Content-Type': 'application/json', ...auth, ...(opts.headers || {}) },
   }).then(async r => {
     const data = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(data.error || `Request failed (${r.status})`);
@@ -41,18 +43,139 @@ function npsColor(n) {
 }
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-/* ---------- engine badge ---------- */
-async function loadHealth() {
+/* ---------- config + auth ---------- */
+let supa = null;       // Supabase client (null when accounts are disabled)
+let authUser = null;   // current signed-in user, or null
+
+async function boot() {
+  let cfg;
+  try { cfg = await api('/config'); }
+  catch { cfg = { engine: 'mock', sheetsEnabled: false, supabase: { enabled: false } }; }
+
+  const label = cfg.engine === 'jev' ? 'Jev · TypeSafe AI' : 'a built-in offline classifier';
+  $('#engineName').textContent = label;
+  $('#engineTag').textContent = cfg.engine === 'jev' ? 'Jev' : 'Mock engine';
+  if (!cfg.sheetsEnabled) {
+    $('#sheetNote').textContent = 'Server note: Google Sheets is not configured yet, so sheet loading is disabled. Set GOOGLE_APPLICATION_CREDENTIALS to enable it. CSV upload works now.';
+    $('#loadSheetBtn').disabled = true;
+  }
+  await initAuth(cfg.supabase);
+}
+
+async function initAuth(sb) {
+  if (!sb || !sb.enabled || !window.supabase) { updateAuthUI(); return; }
+  supa = window.supabase.createClient(sb.url, sb.anonKey, { auth: { persistSession: true, detectSessionInUrl: true } });
+  supa.auth.onAuthStateChange((_e, session) => { authUser = session?.user || null; updateAuthUI(); });
+  const { data } = await supa.auth.getSession();
+  authUser = data?.session?.user || null;
+  updateAuthUI();
+}
+
+async function authHeader() {
+  if (!supa) return {};
+  const { data } = await supa.auth.getSession();
+  const t = data?.session?.access_token;
+  return t ? { Authorization: `Bearer ${t}` } : {};
+}
+
+function updateAuthUI() {
+  const available = Boolean(supa);
+  const signedIn = Boolean(authUser);
+  $('#signInBtn').hidden = !available || signedIn;
+  $('#userChip').hidden = !signedIn;
+  $('#myDataBtn').hidden = !signedIn;
+  if (signedIn) $('#userEmail').textContent = authUser.email || 'Account';
+}
+
+/* auth modal */
+let authMode = 'signin';
+function openAuth() { $('#authModal').hidden = false; setAuthMode('signin'); authFeedback(''); }
+function closeAuth() { $('#authModal').hidden = true; }
+function setAuthMode(m) {
+  authMode = m;
+  $('#authTitle').textContent = m === 'signin' ? 'Sign in' : 'Create account';
+  $('#authSubmit').textContent = m === 'signin' ? 'Sign in' : 'Sign up';
+  $('#authSwitchText').textContent = m === 'signin' ? 'New here?' : 'Already have an account?';
+  $('#authSwitch').textContent = m === 'signin' ? 'Create an account' : 'Sign in';
+}
+function authFeedback(msg, ok) {
+  const el = $('#authMsg'); el.hidden = !msg; el.textContent = msg || '';
+  el.className = 'feedback ' + (ok ? 'ok' : 'err');
+}
+async function submitAuth(e) {
+  e.preventDefault();
+  if (!supa) return;
+  const email = $('#authEmail').value.trim(), pass = $('#authPass').value;
+  authFeedback(''); $('#authSubmit').disabled = true;
   try {
-    const h = await api('/health');
-    const label = h.engine === 'jev' ? 'Jev · TypeSafe AI' : 'a built-in offline classifier';
-    $('#engineName').textContent = label;
-    $('#engineTag').textContent = h.engine === 'jev' ? 'Jev' : 'Mock engine';
-    if (!h.sheetsEnabled) {
-      $('#sheetNote').textContent = 'Server note: Google Sheets is not configured yet, so sheet loading is disabled. Set GOOGLE_APPLICATION_CREDENTIALS to enable it. CSV upload works now.';
-      $('#loadSheetBtn').disabled = true;
+    if (authMode === 'signin') {
+      const { error } = await supa.auth.signInWithPassword({ email, password: pass });
+      if (error) throw error;
+      closeAuth(); toast('Signed in');
+    } else {
+      const { data, error } = await supa.auth.signUp({ email, password: pass });
+      if (error) throw error;
+      if (data.session) { closeAuth(); toast('Account created'); }
+      else authFeedback('Account created — check your email to confirm, then sign in.', true);
     }
-  } catch { /* server may still be starting */ }
+  } catch (err) { authFeedback(err.message || 'Authentication failed.', false); }
+  finally { $('#authSubmit').disabled = false; }
+}
+async function googleAuth() {
+  if (!supa) return;
+  const { error } = await supa.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: location.origin + '/app' } });
+  if (error) authFeedback(error.message, false);
+}
+async function signOut() {
+  if (!supa) return;
+  await supa.auth.signOut();
+  toast('Signed out');
+}
+
+/* my datasets */
+async function openMyData() {
+  $('#dataModal').hidden = false;
+  const list = $('#dataList');
+  list.innerHTML = '<p class="dm-empty">Loading…</p>';
+  try {
+    const { datasets } = await api('/my/datasets');
+    if (!datasets.length) { list.innerHTML = '<p class="dm-empty">No saved datasets yet. Classify something while signed in and it shows up here.</p>'; return; }
+    list.innerHTML = datasets.map(d => `
+      <div class="data-item" data-id="${d.id}">
+        <div class="di-main"><b>${esc(d.name)}</b><small>${d.reviewCount} reviews · ${new Date(d.createdAt).toLocaleDateString()} ${new Date(d.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</small></div>
+        <button class="di-del" data-del="${d.id}" type="button" aria-label="Delete">✕</button>
+      </div>`).join('');
+  } catch (err) { list.innerHTML = `<p class="feedback err" style="margin:10px 0">${esc(err.message)}</p>`; }
+}
+function closeMyData() { $('#dataModal').hidden = true; }
+async function openSavedDataset(id) {
+  closeMyData(); showLoading('Loading dataset…');
+  try { openDashboard(await api('/datasets/' + id)); }
+  catch (err) { toast(err.message, true); }
+  finally { hideLoading(); }
+}
+async function deleteSavedDataset(id, el) {
+  try { await api('/my/datasets/' + id, { method: 'DELETE' }); el.remove(); toast('Dataset deleted'); }
+  catch (err) { toast(err.message, true); }
+}
+
+function wireAuth() {
+  $('#signInBtn').addEventListener('click', openAuth);
+  $('#authClose').addEventListener('click', closeAuth);
+  $('#authModal').addEventListener('click', e => { if (e.target.id === 'authModal') closeAuth(); });
+  $('#authForm').addEventListener('submit', submitAuth);
+  $('#authSwitch').addEventListener('click', () => setAuthMode(authMode === 'signin' ? 'signup' : 'signin'));
+  $('#googleBtn').addEventListener('click', googleAuth);
+  $('#signOutBtn').addEventListener('click', signOut);
+  $('#myDataBtn').addEventListener('click', openMyData);
+  $('#dataClose').addEventListener('click', closeMyData);
+  $('#dataModal').addEventListener('click', e => { if (e.target.id === 'dataModal') closeMyData(); });
+  $('#dataList').addEventListener('click', e => {
+    const del = e.target.closest('[data-del]');
+    if (del) { e.stopPropagation(); deleteSavedDataset(del.dataset.del, del.closest('.data-item')); return; }
+    const item = e.target.closest('.data-item');
+    if (item) openSavedDataset(item.dataset.id);
+  });
 }
 
 /* ---------- connect view ---------- */
@@ -151,7 +274,8 @@ function openDashboard(data) {
   const sub = data.source.type === 'sheet'
     ? `${data.reviews.length} reviews classified from your Google Sheet. Edits sync back to column "${data.source.textColumn}"'s neighbours.`
     : `${data.reviews.length} reviews classified from ${esc(data.name)}. Edit any chip — corrections update the metrics and the export.`;
-  $('#dashSubtitle').textContent = sub;
+  $('#dashSubtitle').textContent = sub + (data.persisted ? ' · saved to your account' : '');
+  if (data.saveError) toast('Classified, but saving to your account failed: ' + data.saveError, true);
   renderAll();
 }
 
@@ -296,6 +420,7 @@ function wireDashboard() {
   });
 }
 
-loadHealth();
+boot();
 wireConnect();
 wireDashboard();
+wireAuth();

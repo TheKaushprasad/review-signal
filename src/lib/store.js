@@ -1,22 +1,22 @@
 import { randomUUID } from 'node:crypto';
 
-// In-memory dataset store. A dataset is one uploaded sheet/CSV plus its
-// classified reviews and the metadata needed to write corrections back to
-// the source Google Sheet. For v1 this lives in process memory; swap for a
-// real DB when multi-user persistence is needed (see README non-goals).
+// In-session cache of datasets. Guests live here only (cleared on restart).
+// Signed-in users also have their datasets persisted in Supabase; this cache
+// holds the active copy so edits/export/write-back don't round-trip the DB.
+// Each dataset: { id, name, source, reviews, userId?, persisted?, createdAt }
 
 const datasets = new Map();
 
-export function createDataset({ name, source, reviews }) {
-  const id = randomUUID();
-  datasets.set(id, {
-    id,
-    name,
-    source,              // { type:'csv'|'sheet', ...sheet metadata }
-    reviews,             // [{ id, rowIndex, author, date, text, sentiment, likeliness, category, nps, edited }]
-    createdAt: new Date().toISOString(),
-  });
-  return datasets.get(id);
+export function putDataset(ds) {
+  if (!ds.id) ds.id = randomUUID();
+  if (!ds.createdAt) ds.createdAt = new Date().toISOString();
+  datasets.set(ds.id, ds);
+  return ds;
+}
+
+// Back-compat helper for guest datasets.
+export function createDataset(d) {
+  return putDataset({ ...d });
 }
 
 export function getDataset(id) {

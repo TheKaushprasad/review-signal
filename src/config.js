@@ -24,7 +24,15 @@ export const config = {
     // for write-back to work.
     credentialsPath: process.env.GOOGLE_APPLICATION_CREDENTIALS || '',
   },
+
+  supabase: {
+    url: process.env.SUPABASE_URL || '',
+    anonKey: process.env.SUPABASE_ANON_KEY || '',       // browser-safe, served to the client
+    serviceKey: process.env.SUPABASE_SERVICE_ROLE_KEY || '', // server-only, never sent to the client
+  },
 };
 
 export const sheetsEnabled = Boolean(config.google.credentialsPath);
 export const jevConfigured = config.classifier === 'jev' && Boolean(config.jev.apiKey);
+// Auth + persistence are enabled only when the project URL and anon key are present.
+export const supabaseEnabled = Boolean(config.supabase.url && config.supabase.anonKey);
