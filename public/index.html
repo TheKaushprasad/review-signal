@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Review Signal</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;680;700&family=Roboto+Mono:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="wrap">
+    <div class="bar">
+      <div class="brand">
+        <div class="glyph">R</div>
+        <div>
+          <h1>Review Signal</h1>
+          <p>Classified by <span id="engineName">Jev · TypeSafe AI</span></p>
+        </div>
+      </div>
+      <div class="source" id="sourceChip" hidden>
+        <span class="dot"></span>
+        <span class="fname" id="sourceName"></span>
+      </div>
+      <button class="ghost" id="themeBtn" type="button">◐ Theme</button>
+      <button class="ghost" id="newBtn" type="button" hidden>↑ New upload</button>
+    </div>
+
+    <!-- CONNECT VIEW -->
+    <section id="connectView">
+      <div class="hero">
+        <h2>Turn a sheet of reviews into a decision-ready dashboard</h2>
+        <p>Upload a CSV or connect a Google Sheet. Every review is classified for
+          sentiment, category, classifier confidence, and NPS impact — then opened
+          in an editable dashboard that writes your corrections back to the source.</p>
+      </div>
+
+      <div class="tabs" role="tablist">
+        <button role="tab" aria-selected="true" data-tab="csv">Upload CSV</button>
+        <button role="tab" aria-selected="false" data-tab="sheet">Google Sheet</button>
+      </div>
+
+      <div class="card panel" data-panel="csv">
+        <div class="drop" id="drop">
+          <input type="file" id="fileInput" accept=".csv,text/csv" hidden>
+          <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 15V3m0 0 4 4m-4-4L8 7"/><path d="M4 14v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></svg>
+          <p><b>Drop a CSV here</b> or <span class="link">browse</span></p>
+          <p class="muted">One review per row. We'll auto-detect the review-text column.</p>
+        </div>
+        <div class="orline"><span>or</span></div>
+        <button class="btn-secondary" id="sampleBtn" type="button">Try the sample dataset (14 app reviews)</button>
+      </div>
+
+      <div class="card panel" data-panel="sheet" hidden>
+        <div class="field">
+          <label for="sheetId">Google Sheet ID or URL</label>
+          <input id="sheetId" type="text" placeholder="1AbC…xyz  or  https://docs.google.com/spreadsheets/d/…/edit">
+        </div>
+        <div class="field">
+          <label for="sheetTab">Tab name <span class="muted">(optional — defaults to first tab)</span></label>
+          <input id="sheetTab" type="text" placeholder="Sheet1">
+        </div>
+        <label class="checkrow"><input type="checkbox" id="writeBack" checked> Write classification columns back to the sheet</label>
+        <button class="btn" id="loadSheetBtn" type="button">Classify sheet</button>
+        <p class="muted sheetnote" id="sheetNote"></p>
+      </div>
+
+      <p class="feedback" id="connectMsg" hidden></p>
+    </section>
+
+    <!-- DASHBOARD VIEW -->
+    <section id="dashView" hidden>
+      <p class="note">
+        <span class="tag" id="engineTag">Jev</span>
+        <span id="dashSubtitle"></span>
+      </p>
+
+      <div class="tiles" id="tiles"></div>
+
+      <div class="grid">
+        <div class="panelstack">
+          <section class="card">
+            <header><h2>Categories</h2><span class="hint">tap to filter</span></header>
+            <div class="cat" id="catPanel"></div>
+          </section>
+          <section class="card">
+            <header><h2>NPS impact</h2><span class="hint">avg / 5 by category</span></header>
+            <div class="nps" id="npsPanel"></div>
+          </section>
+          <button class="btn-secondary wide" id="exportBtn" type="button">⤓ Export classified CSV</button>
+          <button class="btn-secondary wide" id="syncAllBtn" type="button" hidden>⟳ Sync all to sheet</button>
+        </div>
+
+        <section class="card">
+          <div class="toolbar">
+            <div class="segs" id="sentiSeg" role="group" aria-label="Filter by sentiment">
+              <button data-s="all" aria-pressed="true" type="button">All</button>
+              <button data-s="positive" aria-pressed="false" type="button">Positive</button>
+              <button data-s="neutral" aria-pressed="false" type="button">Neutral</button>
+              <button data-s="negative" aria-pressed="false" type="button">Negative</button>
+            </div>
+            <label class="search">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>
+              <input id="searchInput" type="search" placeholder="Search reviews…" aria-label="Search reviews">
+            </label>
+            <select class="sortsel" id="sortSel" aria-label="Sort">
+              <option value="nps">Sort: NPS impact</option>
+              <option value="like">Sort: Likeliness</option>
+              <option value="recent">Sort: Most recent</option>
+            </select>
+          </div>
+          <div class="tablescroll">
+            <table>
+              <thead>
+                <tr>
+                  <th class="c-review">Review</th>
+                  <th>Sentiment</th>
+                  <th>Category</th>
+                  <th>Likeliness</th>
+                  <th>NPS</th>
+                </tr>
+              </thead>
+              <tbody id="rows"></tbody>
+            </table>
+          </div>
+          <div class="empty" id="empty" hidden>No reviews match these filters.</div>
+        </section>
+      </div>
+    </section>
+  </div>
+
+  <div id="loading" hidden><div class="spinner"></div><span id="loadingMsg">Classifying…</span></div>
+  <div id="toast"><span class="tdot"></span><span id="toastMsg">Synced</span></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+{
+  "name": "review-signal",
+  "version": "1.0.0",
+  "description": "Upload a Google Sheet (or CSV) of user reviews, classify each with Jev by TypeSafe AI (sentiment, category, likeliness, NPS impact), and work them in an editable dashboard that writes corrections back to the sheet.",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "googleapis": "^144.0.0",
+    "dotenv": "^16.4.7"
+  }
+}
