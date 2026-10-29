@@ -77,6 +77,14 @@ function wireConnect() {
 
   $('#sampleBtn').addEventListener('click', loadSample);
   $('#loadSheetBtn').addEventListener('click', loadSheet);
+
+  // "Connect Google Sheet" shortcut row switches to the Google Sheet tab.
+  const gotoSheet = $('#gotoSheet');
+  if (gotoSheet) gotoSheet.addEventListener('click', () => {
+    const btn = document.querySelector('.tabs button[data-tab="sheet"]');
+    if (btn) btn.click();
+    const id = $('#sheetId'); if (id) id.focus();
+  });
 }
 
 function connectMsg(msg, ok) {
