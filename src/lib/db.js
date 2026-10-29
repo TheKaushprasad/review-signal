@@ -25,8 +25,14 @@ export async function saveDataset(accessToken, userId, { name, engine, source, r
     sentiment: r.sentiment, likeliness: r.likeliness, category: r.category, nps: r.nps,
     edited: Boolean(r.edited),
   }));
-  const { data: inserted, error: e2 } = await sb.from('reviews').insert(rows).select('id, row_number');
-  if (e2) throw new Error(e2.message);
+  // Insert in chunks so very large sheets don't hit payload limits.
+  const CHUNK = 500;
+  const inserted = [];
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    const { data, error: e2 } = await sb.from('reviews').insert(rows.slice(i, i + CHUNK)).select('id, row_number');
+    if (e2) throw new Error(e2.message);
+    inserted.push(...data);
+  }
 
   const byRow = new Map(inserted.map(x => [x.row_number, x.id]));
   const withIds = reviews.map(r => ({ ...r, id: byRow.get(r.rowNumber ?? null) || r.id }));

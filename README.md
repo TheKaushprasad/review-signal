@@ -102,12 +102,8 @@ keep working unchanged.
    SUPABASE_ANON_KEY=eyJ...        # browser-safe
    SUPABASE_SERVICE_ROLE_KEY=eyJ...# secret, server-only
    ```
-4. **Email/password** works out of the box. For **Google sign-in**: Supabase
-   dashboard → Authentication → Providers → Google → enable and add your Google
-   OAuth client ID/secret, and add `http://localhost:3000/app` (and your prod URL)
-   to the redirect allow-list.
-5. `npm start` — the header now shows **Sign in**; the startup log reads
-   `Accounts: enabled`.
+4. `npm start` — the header now shows **Sign in** (email/password); the startup
+   log reads `Accounts: enabled`.
 
 The anon key is sent to the browser by design (it only grants what RLS allows).
 The service-role key is used server-side only (to verify tokens) and is never
@@ -133,9 +129,8 @@ server memory between requests.
    GOOGLE_CREDENTIALS_JSON={...}   # the service-account JSON, inline (no file on Vercel)
    ```
    (Leave any out to disable that feature — the app still runs.)
-3. Deploy. Then update redirect URLs for your production domain:
-   - **Supabase** → Authentication → URL Configuration: add `https://<your-app>.vercel.app/app`.
-   - **Google OAuth** (if used): add the same URL to the authorized redirect list.
+3. Deploy. Then in **Supabase → Authentication → URL Configuration**, add your
+   production domain `https://<your-app>.vercel.app/app` to the redirect list.
 
 Note: Vercel has no persistent disk, so `GOOGLE_APPLICATION_CREDENTIALS` (a file
 path) won't work there — use `GOOGLE_CREDENTIALS_JSON` instead.

@@ -7,7 +7,8 @@ const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 
 let dataset = null;                         // { datasetId, source, reviews, engine }
-const filters = { senti: 'all', q: '', sort: 'nps', cat: null };
+const filters = { senti: 'all', q: '', sort: 'nps', cat: null, page: 0, needsReview: false };
+const PAGE_SIZE = 50;
 
 /* ---------- helpers ---------- */
 async function api(path, opts = {}) {
@@ -121,19 +122,6 @@ async function submitAuth(e) {
   } catch (err) { authFeedback(err.message || 'Authentication failed.', false); }
   finally { $('#authSubmit').disabled = false; }
 }
-async function googleAuth() {
-  if (!supa) return;
-  authFeedback('');
-  try {
-    const { error } = await supa.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: location.origin + '/app' } });
-    if (error) {
-      const hint = /provider|not enabled|unsupported|disabled/i.test(error.message)
-        ? 'Google sign-in isn’t enabled yet. Enable the Google provider in Supabase (Authentication → Providers), then try again.'
-        : error.message;
-      authFeedback(hint, false);
-    }
-  } catch (err) { authFeedback(err.message || 'Google sign-in failed.', false); }
-}
 async function signOut() {
   if (!supa) return;
   await supa.auth.signOut();
@@ -173,7 +161,6 @@ function wireAuth() {
   $('#authModal').addEventListener('click', e => { if (e.target.id === 'authModal') closeAuth(); });
   $('#authForm').addEventListener('submit', submitAuth);
   $('#authSwitch').addEventListener('click', () => setAuthMode(authMode === 'signin' ? 'signup' : 'signin'));
-  $('#googleBtn').addEventListener('click', googleAuth);
   $('#signOutBtn').addEventListener('click', signOut);
   $('#myDataBtn').addEventListener('click', openMyData);
   $('#dataClose').addEventListener('click', closeMyData);
@@ -236,12 +223,27 @@ function ingestFile(file) {
 async function runPipeline(prepareBody) {
   showLoading('Reading…');
   const prep = await api('/datasets/prepare', { method: 'POST', body: JSON.stringify(prepareBody) });
-  const all = prep.reviews, N = all.length, BATCH = 20, classified = [];
-  for (let i = 0; i < N; i += BATCH) {
-    const r = await api('/classify', { method: 'POST', body: JSON.stringify({ reviews: all.slice(i, i + BATCH) }) });
-    classified.push(...r.reviews);
-    showLoading(`Classifying… ${Math.min(i + BATCH, N)} / ${N}`);
+  const all = prep.reviews, N = all.length, BATCH = 20, CONCURRENCY = 3;
+
+  // Split into batches and process a few in parallel — faster on big sheets,
+  // while each request stays small enough to never hit a serverless timeout.
+  const batches = [];
+  for (let i = 0; i < N; i += BATCH) batches.push({ idx: batches.length, slice: all.slice(i, i + BATCH) });
+  const results = new Array(batches.length);
+  let done = 0;
+  async function worker(queue) {
+    for (const b of queue) {
+      const r = await api('/classify', { method: 'POST', body: JSON.stringify({ reviews: b.slice }) });
+      results[b.idx] = r.reviews;
+      done += b.slice.length;
+      showLoading(`Classifying… ${Math.min(done, N)} / ${N}`);
+    }
   }
+  const queues = Array.from({ length: Math.min(CONCURRENCY, batches.length) }, () => []);
+  batches.forEach((b, i) => queues[i % queues.length].push(b));
+  await Promise.all(queues.map(worker));
+  const classified = results.flat();
+
   showLoading(prepareBody.writeBack ? 'Saving + writing to sheet…' : 'Saving…');
   return api('/datasets/commit', {
     method: 'POST',
@@ -301,7 +303,61 @@ function openDashboard(data) {
   renderAll();
 }
 
-function renderAll() { renderTiles(); renderCats(); renderNps(); renderRows(); }
+function renderAll() { renderTiles(); renderCats(); renderNps(); renderTrends(); renderStats(); renderRows(); }
+
+// Low-confidence queue count + how much the user has had to correct the AI.
+function renderStats() {
+  const rs = dataset.reviews;
+  const nr = rs.filter(r => r.likeliness <= 2).length;
+  const edited = rs.filter(r => r.edited).length;
+  const agree = rs.length ? Math.round((rs.length - edited) / rs.length * 100) : 100;
+  const nrc = $('#nrCount'); if (nrc) nrc.textContent = nr;
+  const btn = $('#needsReviewBtn');
+  if (btn) { btn.hidden = nr === 0 && !filters.needsReview; btn.setAttribute('aria-pressed', String(filters.needsReview)); }
+  const ag = $('#agreeStat');
+  if (ag) ag.textContent = edited ? `${agree}% AI agreement · ${edited} edited` : `${agree}% AI agreement`;
+}
+
+// Sentiment trend over time (only when reviews carry parseable dates).
+function renderTrends() {
+  const card = $('#trendsCard'); if (!card) return;
+  const score = { positive: 1, neutral: 0, negative: -1 };
+  const byDate = new Map();
+  for (const r of dataset.reviews) {
+    const d = String(r.date || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) continue;
+    if (!byDate.has(d)) byDate.set(d, []);
+    byDate.get(d).push(score[r.sentiment] ?? 0);
+  }
+  const pts = [...byDate.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([d, arr]) => ({ d, v: arr.reduce((a, b) => a + b, 0) / arr.length }));
+  if (pts.length < 2) { card.hidden = true; return; }
+  card.hidden = false;
+  const W = 280, Hh = 72, pad = 6;
+  const x = i => pad + i * (W - 2 * pad) / (pts.length - 1);
+  const y = v => pad + (1 - (v + 1) / 2) * (Hh - 2 * pad);
+  const line = pts.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ');
+  const area = `M${x(0).toFixed(1)},${y(pts[0].v).toFixed(1)} ` +
+    pts.map((p, i) => `L${x(i).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ') +
+    ` L${x(pts.length - 1).toFixed(1)},${Hh - pad} L${x(0).toFixed(1)},${Hh - pad} Z`;
+  $('#trendsBody').innerHTML = `
+    <svg viewBox="0 0 ${W} ${Hh}" width="100%" preserveAspectRatio="none" style="display:block;height:72px">
+      <line x1="${pad}" y1="${y(0).toFixed(1)}" x2="${W - pad}" y2="${y(0).toFixed(1)}" stroke="var(--line)" stroke-dasharray="3 3"/>
+      <path d="${area}" fill="var(--accent-soft)"/>
+      <path d="${line}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    </svg>
+    <div class="trend-x"><span>${pts[0].d}</span><span>more positive ↑</span><span>${pts[pts.length - 1].d}</span></div>`;
+}
+
+function renderPager(total, start, shown, pages) {
+  const el = $('#pager'); if (!el) return;
+  if (total <= PAGE_SIZE) { el.hidden = true; el.innerHTML = ''; return; }
+  el.hidden = false;
+  el.innerHTML = `
+    <button class="pg" id="pgPrev" type="button" ${filters.page === 0 ? 'disabled' : ''}>‹ Prev</button>
+    <span class="pg-info">${start + 1}–${start + shown} of ${total}</span>
+    <button class="pg" id="pgNext" type="button" ${filters.page >= pages - 1 ? 'disabled' : ''}>Next ›</button>`;
+}
 
 function renderTiles() {
   const rs = dataset.reviews, total = rs.length || 1;
@@ -350,6 +406,7 @@ function visible() {
   let out = dataset.reviews.filter(r => {
     if (filters.senti !== 'all' && r.sentiment !== filters.senti) return false;
     if (filters.cat && r.category !== filters.cat) return false;
+    if (filters.needsReview && r.likeliness > 2) return false;
     if (filters.q && !((r.text + ' ' + r.author).toLowerCase().includes(filters.q))) return false;
     return true;
   });
@@ -373,7 +430,12 @@ function catSelect(r) {
 function renderRows() {
   const rows = visible();
   $('#empty').hidden = rows.length > 0;
-  $('#rows').innerHTML = rows.map(r => {
+  const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  if (filters.page >= pages) filters.page = pages - 1;
+  if (filters.page < 0) filters.page = 0;
+  const start = filters.page * PAGE_SIZE;
+  const pageRows = rows.slice(start, start + PAGE_SIZE);
+  $('#rows').innerHTML = pageRows.map(r => {
     const [bg, fg] = npsColor(r.nps);
     const ed = r.edited ? `<div class="edited" data-id="${r.id}">● edited${dataset.source.type === 'sheet' ? ' · synced' : ''}</div>` : '';
     return `<tr>
@@ -385,6 +447,7 @@ function renderRows() {
       <td><span class="npsflag mono" style="background:${bg};color:${fg}">${r.nps}</span></td>
     </tr>`;
   }).join('');
+  renderPager(rows.length, start, pageRows.length, pages);
 }
 
 /* ---------- edits ---------- */
@@ -436,13 +499,21 @@ function wireDashboard() {
   });
   $('#sentiSeg').addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
-    filters.senti = b.dataset.s;
+    filters.senti = b.dataset.s; filters.page = 0;
     [...e.currentTarget.children].forEach(x => x.setAttribute('aria-pressed', x === b));
     renderRows();
   });
-  $('#searchInput').addEventListener('input', e => { filters.q = e.target.value.toLowerCase().trim(); renderRows(); });
-  $('#sortSel').addEventListener('change', e => { filters.sort = e.target.value; renderRows(); });
-  const toggleCat = c => { filters.cat = filters.cat === c ? null : c; renderCats(); renderRows(); };
+  $('#searchInput').addEventListener('input', e => { filters.q = e.target.value.toLowerCase().trim(); filters.page = 0; renderRows(); });
+  $('#sortSel').addEventListener('change', e => { filters.sort = e.target.value; filters.page = 0; renderRows(); });
+  const nrBtn = $('#needsReviewBtn');
+  if (nrBtn) nrBtn.addEventListener('click', () => { filters.needsReview = !filters.needsReview; filters.page = 0; renderStats(); renderRows(); });
+  const pager = $('#pager');
+  if (pager) pager.addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b || b.disabled) return;
+    if (b.id === 'pgPrev') filters.page--; else if (b.id === 'pgNext') filters.page++;
+    renderRows();
+  });
+  const toggleCat = c => { filters.cat = filters.cat === c ? null : c; filters.page = 0; renderCats(); renderRows(); };
   $('#catPanel').addEventListener('click', e => { const row = e.target.closest('.catrow'); if (row) toggleCat(row.dataset.cat); });
   $('#catPanel').addEventListener('keydown', e => {
     if (e.key !== 'Enter' && e.key !== ' ') return;
