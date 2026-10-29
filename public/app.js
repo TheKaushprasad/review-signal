@@ -123,8 +123,16 @@ async function submitAuth(e) {
 }
 async function googleAuth() {
   if (!supa) return;
-  const { error } = await supa.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: location.origin + '/app' } });
-  if (error) authFeedback(error.message, false);
+  authFeedback('');
+  try {
+    const { error } = await supa.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: location.origin + '/app' } });
+    if (error) {
+      const hint = /provider|not enabled|unsupported|disabled/i.test(error.message)
+        ? 'Google sign-in isn’t enabled yet. Enable the Google provider in Supabase (Authentication → Providers), then try again.'
+        : error.message;
+      authFeedback(hint, false);
+    }
+  } catch (err) { authFeedback(err.message || 'Google sign-in failed.', false); }
 }
 async function signOut() {
   if (!supa) return;
@@ -223,12 +231,29 @@ function ingestFile(file) {
   reader.readAsText(file);
 }
 
+// Read → classify in small batches (with progress) → commit. Keeping each
+// request small is what lets large sheets work on serverless hosts.
+async function runPipeline(prepareBody) {
+  showLoading('Reading…');
+  const prep = await api('/datasets/prepare', { method: 'POST', body: JSON.stringify(prepareBody) });
+  const all = prep.reviews, N = all.length, BATCH = 20, classified = [];
+  for (let i = 0; i < N; i += BATCH) {
+    const r = await api('/classify', { method: 'POST', body: JSON.stringify({ reviews: all.slice(i, i + BATCH) }) });
+    classified.push(...r.reviews);
+    showLoading(`Classifying… ${Math.min(i + BATCH, N)} / ${N}`);
+  }
+  showLoading(prepareBody.writeBack ? 'Saving + writing to sheet…' : 'Saving…');
+  return api('/datasets/commit', {
+    method: 'POST',
+    body: JSON.stringify({ name: prep.name, source: prep.source, reviews: classified, writeBack: prepareBody.writeBack }),
+  });
+}
+
 async function ingestCSV(content, filename) {
   connectMsg('', true);
-  showLoading('Classifying reviews…');
+  showLoading('Reading CSV…');
   try {
-    const data = await api('/datasets', { method: 'POST', body: JSON.stringify({ kind: 'csv', content, filename }) });
-    openDashboard(data);
+    openDashboard(await runPipeline({ kind: 'csv', content, filename }));
   } catch (err) { connectMsg(err.message, false); }
   finally { hideLoading(); }
 }
@@ -245,15 +270,12 @@ async function loadSheet() {
   const id = parseSheetId($('#sheetId').value);
   if (!id) return connectMsg('Paste a Google Sheet ID or URL first.', false);
   connectMsg('', true);
-  showLoading('Reading sheet and classifying…');
+  showLoading('Reading sheet…');
   try {
-    const data = await api('/datasets', {
-      method: 'POST',
-      body: JSON.stringify({
-        kind: 'sheet', spreadsheetId: id,
-        sheetName: $('#sheetTab').value.trim() || undefined,
-        writeBack: $('#writeBack').checked,
-      }),
+    const data = await runPipeline({
+      kind: 'sheet', spreadsheetId: id,
+      sheetName: $('#sheetTab').value.trim() || undefined,
+      writeBack: $('#writeBack').checked,
     });
     openDashboard(data);
     if (data.wroteBack) toast('Classifications written to the sheet');
@@ -371,12 +393,40 @@ async function onEdit(id, field, value) {
   if (!r) return;
   r[field] = value; r.edited = true;
   renderAll();
+
+  // A guest CSV dataset needs no server round-trip — the client is the source
+  // of truth and export is client-side. Only hit the server when we must
+  // persist (signed in) or write back to a sheet.
+  const needsServer = dataset.persisted || dataset.source.type === 'sheet';
+  if (!needsServer) { toast(`Saved ${field}`); return; }
+
   try {
-    const res = await api(`/datasets/${dataset.datasetId}/reviews/${id}`, { method: 'PATCH', body: JSON.stringify({ [field]: value }) });
+    const res = await api(`/datasets/${dataset.datasetId}/reviews/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ [field]: value, source: dataset.source, review: r }),
+    });
     if (res.synced) toast(`Synced ${field} to the sheet`);
-    else if (res.syncError) toast(`Saved locally — sheet sync failed: ${res.syncError}`, true);
+    else if (res.syncError) toast(`Saved — sheet sync failed: ${res.syncError}`, true);
+    else if (res.saved) toast(`Saved ${field} to your account`);
+    else if (res.saveError) toast(`Saved locally — account save failed: ${res.saveError}`, true);
     else toast(`Saved ${field}`);
   } catch (err) { toast(err.message, true); }
+}
+
+// Build and download the classified CSV entirely in the browser.
+function exportCsv() {
+  const q = v => { v = v == null ? '' : String(v); return /[",\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v; };
+  const header = ['author', 'date', 'review', 'Sentiment', 'Category', 'Likeliness (1-5)', 'NPS Impact (1-5)'];
+  const lines = [header.join(',')];
+  for (const r of dataset.reviews) {
+    lines.push([r.author, r.date, r.text, r.sentiment, r.category, r.likeliness, r.nps].map(q).join(','));
+  }
+  const blob = new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'review-signal-export.csv';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function wireDashboard() {
@@ -399,10 +449,16 @@ function wireDashboard() {
     const row = e.target.closest('.catrow'); if (row) { e.preventDefault(); toggleCat(row.dataset.cat); }
   });
 
-  $('#exportBtn').addEventListener('click', () => { window.location = `/api/datasets/${dataset.datasetId}/export`; });
+  $('#exportBtn').addEventListener('click', exportCsv);
   $('#syncAllBtn').addEventListener('click', async () => {
     showLoading('Writing all classifications to the sheet…');
-    try { const r = await api(`/datasets/${dataset.datasetId}/writeback`, { method: 'POST' }); toast(`Synced ${r.cells} cells to the sheet`); }
+    try {
+      const r = await api(`/datasets/${dataset.datasetId}/writeback`, {
+        method: 'POST',
+        body: JSON.stringify({ source: dataset.source, reviews: dataset.reviews }),
+      });
+      toast(`Synced ${r.cells} cells to the sheet`);
+    }
     catch (err) { toast(err.message, true); }
     finally { hideLoading(); }
   });

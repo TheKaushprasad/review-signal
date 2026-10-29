@@ -9,10 +9,10 @@ let _sheets = null;
 function client() {
   if (!sheetsEnabled) throw new Error('Google Sheets is not configured (set GOOGLE_APPLICATION_CREDENTIALS).');
   if (_sheets) return _sheets;
-  const auth = new google.auth.GoogleAuth({
-    keyFile: config.google.credentialsPath,
-    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-  });
+  const scopes = ['https://www.googleapis.com/auth/spreadsheets'];
+  const auth = config.google.credentialsJson
+    ? new google.auth.GoogleAuth({ credentials: JSON.parse(config.google.credentialsJson), scopes })
+    : new google.auth.GoogleAuth({ keyFile: config.google.credentialsPath, scopes });
   _sheets = google.sheets({ version: 'v4', auth });
   return _sheets;
 }

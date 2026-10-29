@@ -22,9 +22,15 @@ app.get('/app', (req, res) => res.sendFile(join(publicDir, 'index.html')));
 // index:false so "/" is handled by the route above, not index.html.
 app.use(express.static(publicDir, { index: false }));
 
-app.listen(config.port, () => {
-  console.log(`\n  Review Signal running at http://localhost:${config.port}`);
-  console.log(`  Classifier : ${activeEngine()}${activeEngine() === 'mock' ? '  (offline heuristic — set CLASSIFIER=jev for TypeSafe AI)' : '  (TypeSafe AI)'}`);
-  console.log(`  Sheets     : ${sheetsEnabled ? 'enabled' : 'disabled (CSV upload only — set GOOGLE_APPLICATION_CREDENTIALS to enable)'}`);
-  console.log(`  Accounts   : ${supabaseEnabled ? 'enabled (Supabase auth + persistence)' : 'disabled (guest only — set SUPABASE_URL / SUPABASE_ANON_KEY to enable)'}\n`);
-});
+// On Vercel the app is imported by api/index.js as a serverless handler, so it
+// must not call listen(). Locally (VERCEL unset) it runs as a normal server.
+if (!process.env.VERCEL) {
+  app.listen(config.port, () => {
+    console.log(`\n  Review Signal running at http://localhost:${config.port}`);
+    console.log(`  Classifier : ${activeEngine()}${activeEngine() === 'mock' ? '  (offline heuristic — set CLASSIFIER=jev for TypeSafe AI)' : '  (TypeSafe AI)'}`);
+    console.log(`  Sheets     : ${sheetsEnabled ? 'enabled' : 'disabled (CSV upload only — set GOOGLE_APPLICATION_CREDENTIALS to enable)'}`);
+    console.log(`  Accounts   : ${supabaseEnabled ? 'enabled (Supabase auth + persistence)' : 'disabled (guest only — set SUPABASE_URL / SUPABASE_ANON_KEY to enable)'}\n`);
+  });
+}
+
+export default app;

@@ -19,10 +19,12 @@ export const config = {
   },
 
   google: {
-    // Path to a service-account JSON key file. The sheet must be shared with
-    // the service account's email (…@….iam.gserviceaccount.com) as Editor
-    // for write-back to work.
+    // Path to a service-account JSON key file (local dev). The sheet must be
+    // shared with the service account's client_email as Editor.
     credentialsPath: process.env.GOOGLE_APPLICATION_CREDENTIALS || '',
+    // Or the JSON key's contents inline, for hosts without a filesystem
+    // (e.g. Vercel). Takes precedence over the path when set.
+    credentialsJson: process.env.GOOGLE_CREDENTIALS_JSON || '',
   },
 
   supabase: {
@@ -32,7 +34,7 @@ export const config = {
   },
 };
 
-export const sheetsEnabled = Boolean(config.google.credentialsPath);
+export const sheetsEnabled = Boolean(config.google.credentialsPath || config.google.credentialsJson);
 export const jevConfigured = config.classifier === 'jev' && Boolean(config.jev.apiKey);
 // Auth + persistence are enabled only when the project URL and anon key are present.
 export const supabaseEnabled = Boolean(config.supabase.url && config.supabase.anonKey);

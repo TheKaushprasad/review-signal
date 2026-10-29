@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { csvToRecords, guessTextColumn, guessColumn, recordsToCSV } from '../lib/csv.js';
+import { csvToRecords, guessTextColumn, guessColumn } from '../lib/csv.js';
 import { classifyReviews, activeEngine } from '../classifiers/index.js';
 import { createDataset, putDataset, getDataset, updateReview } from '../lib/store.js';
 import { saveDataset, loadDataset, listDatasets, updateReviewDb, deleteDataset } from '../lib/db.js';
@@ -69,8 +69,14 @@ async function finishDataset(req, res, { name, source, reviews, wroteBack }) {
   return res.json(serializeDataset(ds, { wroteBack, saved: false }));
 }
 
-// Create a dataset from a CSV upload or a Google Sheet.
-router.post('/datasets', async (req, res) => {
+// --- 3-step ingest (prepare → classify in batches → commit) ------------------
+// Classification is split into small client-driven batches so no single request
+// processes the whole sheet — which would exceed serverless function timeouts
+// (e.g. ~10s on Vercel Hobby) on anything but tiny inputs.
+
+// 1) Parse the CSV / read the sheet and return UNCLASSIFIED reviews + source.
+//    Fast: no model calls.
+router.post('/datasets/prepare', async (req, res) => {
   try {
     const { kind } = req.body;
 
@@ -81,47 +87,70 @@ router.post('/datasets', async (req, res) => {
       if (!headers.length) return res.status(400).json({ error: 'Could not read any columns from the CSV.' });
       const col = textColumn && headers.includes(textColumn) ? textColumn : guessTextColumn(headers);
       const rows = records.map((record, i) => ({ rowNumber: i + 2, record }));
-      let reviews = buildReviews(headers, rows, col);
+      const reviews = buildReviews(headers, rows, col);
       if (!reviews.length) return res.status(400).json({ error: `No non-empty reviews found in column "${col}".` });
-      reviews = await classifyReviews(reviews);
-      return finishDataset(req, res, {
-        name: filename || 'Uploaded CSV',
-        source: { type: 'csv', textColumn: col },
-        reviews, wroteBack: false,
-      });
+      return res.json({ name: filename || 'Uploaded CSV', source: { type: 'csv', textColumn: col }, reviews });
     }
 
     if (kind === 'sheet') {
       if (!sheetsEnabled) {
-        return res.status(400).json({ error: 'Google Sheets is not configured on the server. Set GOOGLE_APPLICATION_CREDENTIALS and share the sheet with the service account.' });
+        return res.status(400).json({ error: 'Google Sheets is not configured on the server. Set GOOGLE_APPLICATION_CREDENTIALS (or GOOGLE_CREDENTIALS_JSON) and share the sheet with the service account.' });
       }
       const { spreadsheetId, sheetName, textColumn, writeBack = true } = req.body;
       if (!spreadsheetId) return res.status(400).json({ error: 'Missing spreadsheetId.' });
       const { sheetName: resolved, headers, rows } = await readSheet(spreadsheetId, sheetName);
       const col = textColumn && headers.includes(textColumn) ? textColumn : guessTextColumn(headers);
-      let reviews = buildReviews(headers, rows, col);
+      const reviews = buildReviews(headers, rows, col);
       if (!reviews.length) return res.status(400).json({ error: `No non-empty reviews found in column "${col}".` });
-      reviews = await classifyReviews(reviews);
-
       const classStartColIndex = findClassBlock(headers);
       const source = {
         type: 'sheet', spreadsheetId, sheetName: resolved, textColumn: col,
         classStartColIndex, writeBack: Boolean(writeBack),
         url: `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`,
       };
-
-      let wroteBack = false;
-      if (writeBack) {
-        await writeAllClassification(spreadsheetId, resolved, classStartColIndex, reviews);
-        wroteBack = true;
-      }
-      return finishDataset(req, res, { name: `${resolved} (Google Sheet)`, source, reviews, wroteBack });
+      return res.json({ name: `${resolved} (Google Sheet)`, source, reviews });
     }
 
     return res.status(400).json({ error: 'kind must be "csv" or "sheet".' });
   } catch (err) {
-    console.error('ingest error:', err);
+    console.error('prepare error:', err);
+    res.status(500).json({ error: err.message || 'Could not read the input.' });
+  }
+});
+
+// 2) Classify ONE batch of reviews. The client calls this repeatedly with chunks.
+router.post('/classify', async (req, res) => {
+  try {
+    const reviews = Array.isArray(req.body?.reviews) ? req.body.reviews : [];
+    if (!reviews.length) return res.json({ reviews: [] });
+    if (reviews.length > 50) return res.status(400).json({ error: 'Batch too large (max 50 reviews).' });
+    const out = await classifyReviews(reviews);
+    res.json({ reviews: out });
+  } catch (err) {
+    console.error('classify error:', err);
     res.status(500).json({ error: err.message || 'Classification failed.' });
+  }
+});
+
+// 3) Commit a fully-classified dataset: write back to the sheet (one call) and
+//    persist to Supabase when signed in (one bulk insert). Both are single
+//    operations regardless of size, so they stay well under the timeout.
+router.post('/datasets/commit', async (req, res) => {
+  try {
+    const { name, source, reviews, writeBack } = req.body || {};
+    if (!source || !Array.isArray(reviews) || !reviews.length) {
+      return res.status(400).json({ error: 'Missing source or reviews.' });
+    }
+    let wroteBack = false;
+    const doWrite = writeBack ?? source.writeBack;
+    if (source.type === 'sheet' && doWrite && source.spreadsheetId) {
+      await writeAllClassification(source.spreadsheetId, source.sheetName, source.classStartColIndex, reviews);
+      wroteBack = true;
+    }
+    return finishDataset(req, res, { name, source, reviews, wroteBack });
+  } catch (err) {
+    console.error('commit error:', err);
+    res.status(500).json({ error: err.message || 'Could not save the dataset.' });
   }
 });
 
@@ -166,73 +195,72 @@ router.get('/datasets/:id', async (req, res) => {
   res.json(serializeDataset(ds, {}));
 });
 
-// Edit a single review: update the cache, persist to the DB (if owned), and
-// write back to the sheet (if sheet-backed).
+// Edit a single review. Stateless: the client sends the new values, plus the
+// sheet `source` and `review` when a write-back is needed — so this works on
+// serverless hosts where the in-memory cache may be gone. Persists to the DB
+// when the caller is signed in (RLS confirms ownership).
 router.patch('/datasets/:id/reviews/:rid', async (req, res) => {
-  const ds = await getOrHydrate(req, req.params.id);
-  if (!ds) return res.status(404).json({ error: 'Dataset not found.' });
-  const review = updateReview(ds.id, req.params.rid, req.body || {});
-  if (!review) return res.status(404).json({ error: 'Review not found.' });
+  const body = req.body || {};
+  const patch = {};
+  for (const k of ['sentiment', 'category', 'likeliness', 'nps']) {
+    if (body[k] !== undefined) patch[k] = body[k];
+  }
+
+  // keep the in-session cache current when present (local dev convenience)
+  updateReview(req.params.id, req.params.rid, patch);
 
   let saved = null, saveError = null;
-  if (ds.persisted && req.user) {
-    try { await updateReviewDb(req.accessToken, review.id, req.body || {}); saved = true; }
+  if (req.user && supabaseEnabled) {
+    try { await updateReviewDb(req.accessToken, req.params.rid, patch); saved = true; }
     catch (err) { saved = false; saveError = err.message; }
   }
 
   let synced = false, syncError = null;
-  if (ds.source.type === 'sheet' && ds.source.writeBack) {
+  const src = body.source;
+  if (src && src.type === 'sheet' && src.writeBack && src.spreadsheetId) {
     try {
-      await writeOneClassification(ds.source.spreadsheetId, ds.source.sheetName, ds.source.classStartColIndex, review);
+      const merged = { ...(body.review || {}), ...patch };
+      await writeOneClassification(src.spreadsheetId, src.sheetName, src.classStartColIndex, merged);
       synced = true;
     } catch (err) { syncError = err.message; }
   }
-  res.json({ review, synced, syncError, saved, saveError });
+  res.json({ ok: true, synced, syncError, saved, saveError });
 });
 
-// Push every current classification to the sheet.
+// Push every classification to the sheet. Stateless: the client sends the
+// sheet `source` and the full `reviews` array.
 router.post('/datasets/:id/writeback', async (req, res) => {
-  const ds = await getOrHydrate(req, req.params.id);
-  if (!ds) return res.status(404).json({ error: 'Dataset not found.' });
-  if (ds.source.type !== 'sheet') return res.status(400).json({ error: 'This dataset is not backed by a Google Sheet.' });
+  const { source, reviews } = req.body || {};
+  if (!source || source.type !== 'sheet' || !source.spreadsheetId) {
+    return res.status(400).json({ error: 'This dataset is not backed by a Google Sheet.' });
+  }
   try {
-    const result = await writeAllClassification(ds.source.spreadsheetId, ds.source.sheetName, ds.source.classStartColIndex, ds.reviews);
+    const result = await writeAllClassification(source.spreadsheetId, source.sheetName, source.classStartColIndex, reviews || []);
     res.json({ synced: true, ...result });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Export the classified dataset as a CSV download.
-router.get('/datasets/:id/export', async (req, res) => {
-  const ds = await getOrHydrate(req, req.params.id);
-  if (!ds) return res.status(404).json({ error: 'Dataset not found.' });
-  const headers = ['author', 'date', 'review', ...CLASS_HEADERS];
-  const records = ds.reviews.map(r => ({
-    author: r.author, date: r.date, review: r.text,
-    'Sentiment': r.sentiment, 'Category': r.category,
-    'Likeliness (1-5)': r.likeliness, 'NPS Impact (1-5)': r.nps,
-  }));
-  const csv = recordsToCSV(headers, records);
-  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-  res.setHeader('Content-Disposition', 'attachment; filename="review-signal-export.csv"');
-  res.send(csv);
-});
-
 function serializeDataset(ds, extra) {
+  const s = ds.source || {};
+  // Sheet datasets carry their full source to the client so edits/write-back
+  // can be stateless (the client sends it back — works on serverless hosts).
+  const source = s.type === 'sheet'
+    ? {
+        type: 'sheet', textColumn: s.textColumn, writeBack: Boolean(s.writeBack),
+        url: s.url || null, spreadsheetId: s.spreadsheetId, sheetName: s.sheetName,
+        classStartColIndex: s.classStartColIndex,
+      }
+    : { type: s.type || 'csv', textColumn: s.textColumn, writeBack: false, url: null };
   return {
     datasetId: ds.id,
     name: ds.name,
     engine: activeEngine(),
     persisted: Boolean(ds.persisted),
-    source: {
-      type: ds.source.type,
-      textColumn: ds.source.textColumn,
-      writeBack: Boolean(ds.source.writeBack),
-      url: ds.source.url || null,
-    },
-    reviews: ds.reviews.map(({ id, author, date, text, sentiment, likeliness, category, nps, edited }) =>
-      ({ id, author, date, text, sentiment, likeliness, category, nps, edited: Boolean(edited) })),
+    source,
+    reviews: ds.reviews.map(({ id, rowNumber, author, date, text, sentiment, likeliness, category, nps, edited }) =>
+      ({ id, rowNumber, author, date, text, sentiment, likeliness, category, nps, edited: Boolean(edited) })),
     ...extra,
   };
 }

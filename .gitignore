@@ -1,6 +1,7 @@
 node_modules/
 .env
 *.log
+.vercel
 # local Claude Code tooling (skills, settings) — not part of the app
 .claude/
 # never commit service-account keys

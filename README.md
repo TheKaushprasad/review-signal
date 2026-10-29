@@ -113,6 +113,33 @@ The anon key is sent to the browser by design (it only grants what RLS allows).
 The service-role key is used server-side only (to verify tokens) and is never
 sent to the client.
 
+## Deploying to Vercel
+
+The app ships with a serverless entry ([`api/index.js`](api/index.js)) and
+[`vercel.json`](vercel.json) that route every request through the Express app, so
+it runs on Vercel as-is. The guest flow is stateless (the browser holds the
+dataset; export is client-side; sheet write-back sends its context in the
+request), and signed-in data lives in Supabase — so nothing depends on
+server memory between requests.
+
+1. Push to GitHub and **Import** the repo in Vercel.
+2. In the Vercel project's **Environment Variables**, add what you use:
+   ```
+   CLASSIFIER=jev
+   TYPESAFE_API_KEY=...
+   SUPABASE_URL=...
+   SUPABASE_ANON_KEY=...
+   SUPABASE_SERVICE_ROLE_KEY=...
+   GOOGLE_CREDENTIALS_JSON={...}   # the service-account JSON, inline (no file on Vercel)
+   ```
+   (Leave any out to disable that feature — the app still runs.)
+3. Deploy. Then update redirect URLs for your production domain:
+   - **Supabase** → Authentication → URL Configuration: add `https://<your-app>.vercel.app/app`.
+   - **Google OAuth** (if used): add the same URL to the authorized redirect list.
+
+Note: Vercel has no persistent disk, so `GOOGLE_APPLICATION_CREDENTIALS` (a file
+path) won't work there — use `GOOGLE_CREDENTIALS_JSON` instead.
+
 ## Architecture
 
 ```
