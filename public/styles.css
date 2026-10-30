@@ -336,3 +336,24 @@ button.ghost.accent:hover { filter: brightness(1.07); color: #fff; }
 
 .trends { padding: 14px 16px 12px; }
 .trend-x { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--fg-faint); margin-top: 6px; }
+
+/* ===== Home-link logo + AI Summary ===== */
+a.glyph { text-decoration: none; }
+a.glyph:hover { filter: brightness(1.08); }
+
+.insights { margin-bottom: 14px; }
+.insights > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 13px 16px; border-bottom: 1px solid var(--line); }
+.insights > header h2 { font-size: 14px; font-weight: 650; }
+.insights > header .btn-secondary { padding: 6px 13px; font-size: 12px; }
+.ins-hint { font-size: 13px; color: var(--fg-faint); padding: 16px; margin: 0; }
+.ins-wrap { padding: 6px 16px 18px; }
+.ins-headline { font-size: 15px; font-weight: 600; color: var(--fg); margin: 10px 0 2px; line-height: 1.5; }
+.ins-block { margin-top: 15px; }
+.ins-block h4 { font-size: 10.5px; letter-spacing: .05em; text-transform: uppercase; color: var(--fg-faint); font-weight: 600; margin: 0 0 7px; }
+.ins-block > p { font-size: 13px; color: var(--fg-soft); margin: 0; line-height: 1.55; }
+.ins-probs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 11px; }
+.ins-probs .ip-top { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.ins-probs b { font-size: 13.5px; color: var(--fg); font-weight: 620; }
+.ins-probs p { font-size: 12.5px; color: var(--fg-soft); margin: 3px 0 0; line-height: 1.5; }
+.ins-cat { font-size: 10.5px; background: var(--accent-soft); color: var(--accent); border-radius: 5px; padding: 1px 7px; font-weight: 600; }
+.ins-recs { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--fg-soft); line-height: 1.5; }

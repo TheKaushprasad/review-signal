@@ -3,8 +3,9 @@ import { csvToRecords, guessTextColumn, guessColumn } from '../lib/csv.js';
 import { classifyReviews, activeEngine } from '../classifiers/index.js';
 import { createDataset, putDataset, getDataset, updateReview } from '../lib/store.js';
 import { saveDataset, loadDataset, listDatasets, updateReviewDb, deleteDataset } from '../lib/db.js';
-import { sheetsEnabled, supabaseEnabled, config } from '../config.js';
+import { sheetsEnabled, supabaseEnabled, openaiEnabled, config } from '../config.js';
 import { requireAuth } from '../lib/auth.js';
+import { generateInsights } from '../lib/insights.js';
 import {
   readSheet, writeAllClassification, writeOneClassification, CLASS_HEADERS,
 } from '../sheets/sheets.js';
@@ -43,10 +44,24 @@ router.get('/config', (req, res) => {
   res.json({
     engine: activeEngine(),
     sheetsEnabled,
+    insights: openaiEnabled,
     supabase: supabaseEnabled
       ? { enabled: true, url: config.supabase.url, anonKey: config.supabase.anonKey }
       : { enabled: false },
   });
+});
+
+// Dataset-level AI Summary (OpenAI). Stateless: the client sends the classified
+// reviews; one model call returns a decision-ready summary.
+router.post('/insights', async (req, res) => {
+  if (!openaiEnabled) return res.status(501).json({ error: 'AI Summary is not enabled on this server (no OpenAI key).' });
+  try {
+    const insights = await generateInsights(req.body?.reviews);
+    res.json({ insights });
+  } catch (err) {
+    console.error('insights error:', err);
+    res.status(500).json({ error: err.message || 'Could not generate the summary.' });
+  }
 });
 
 router.get('/health', (req, res) => {

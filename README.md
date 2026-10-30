@@ -109,6 +109,21 @@ The anon key is sent to the browser by design (it only grants what RLS allows).
 The service-role key is used server-side only (to verify tokens) and is never
 sent to the client.
 
+## AI Summary (OpenAI — optional)
+
+Jev classifies every review; **OpenAI** turns the whole classified set into a
+one-click **executive summary** (headline, top problems, NPS drivers,
+recommended actions). It's a single model call over a compact digest of the
+data, so it's cheap and fast at any size.
+
+Set in `.env` (or Vercel env):
+```
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4o-mini   # optional; any chat model that supports JSON mode
+```
+When set, an **AI Summary** card appears on the dashboard with a **Generate**
+button. Without a key, the card is hidden and everything else works unchanged.
+
 ## Deploying to Vercel
 
 The app ships with a serverless entry ([`api/index.js`](api/index.js)) and

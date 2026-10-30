@@ -47,12 +47,14 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '
 /* ---------- config + auth ---------- */
 let supa = null;       // Supabase client (null when accounts are disabled)
 let authUser = null;   // current signed-in user, or null
+let insightsEnabled = false; // OpenAI AI Summary available?
 
 async function boot() {
   let cfg;
   try { cfg = await api('/config'); }
   catch { cfg = { engine: 'mock', sheetsEnabled: false, supabase: { enabled: false } }; }
 
+  insightsEnabled = Boolean(cfg.insights);
   const label = cfg.engine === 'jev' ? 'Jev · TypeSafe AI' : 'a built-in offline classifier';
   $('#engineName').textContent = label;
   $('#engineTag').textContent = cfg.engine === 'jev' ? 'Jev' : 'Mock engine';
@@ -250,6 +252,13 @@ function openDashboard(data) {
   $('#connectView').hidden = true;
   $('#dashView').hidden = false;
   $('#newBtn').hidden = false;
+  // reset the AI Summary card for this dataset
+  const ic = $('#insightsCard');
+  if (ic) {
+    ic.hidden = !insightsEnabled;
+    $('#insightsBody').innerHTML = `<p class="ins-hint">Generate an AI executive summary — top problems, what's dragging NPS, and recommended actions.</p>`;
+    const gib = $('#genInsightsBtn'); if (gib) gib.textContent = 'Generate';
+  }
   const chip = $('#sourceChip');
   chip.hidden = false;
   $('#sourceName').textContent = `${data.name} · ${data.reviews.length} reviews`;
@@ -451,7 +460,37 @@ function exportCsv() {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+/* ---------- AI Summary (OpenAI) ---------- */
+async function runInsights() {
+  const btn = $('#genInsightsBtn');
+  btn.disabled = true; btn.textContent = 'Generating…';
+  $('#insightsBody').innerHTML = `<p class="ins-hint">Analyzing ${dataset.reviews.length} reviews with OpenAI…</p>`;
+  try {
+    const r = await api('/insights', { method: 'POST', body: JSON.stringify({ reviews: dataset.reviews }) });
+    renderInsights(r.insights || {});
+    btn.textContent = 'Regenerate';
+  } catch (err) {
+    $('#insightsBody').innerHTML = `<p class="feedback err" style="margin:12px 16px">${esc(err.message)}</p>`;
+    btn.textContent = 'Try again';
+  } finally { btn.disabled = false; }
+}
+
+function renderInsights(x) {
+  const probs = (x.topProblems || []).map(p =>
+    `<li><div class="ip-top"><b>${esc(p.title || '')}</b>${p.category ? `<span class="ins-cat">${esc(p.category)}</span>` : ''}</div>${p.detail ? `<p>${esc(p.detail)}</p>` : ''}</li>`).join('');
+  const recs = (x.recommendations || []).map(r => `<li>${esc(r)}</li>`).join('');
+  $('#insightsBody').innerHTML = `
+    <div class="ins-wrap">
+      ${x.headline ? `<p class="ins-headline">${esc(x.headline)}</p>` : ''}
+      ${probs ? `<div class="ins-block"><h4>Top problems</h4><ul class="ins-probs">${probs}</ul></div>` : ''}
+      ${x.npsDrivers ? `<div class="ins-block"><h4>NPS drivers</h4><p>${esc(x.npsDrivers)}</p></div>` : ''}
+      ${recs ? `<div class="ins-block"><h4>Recommended actions</h4><ol class="ins-recs">${recs}</ol></div>` : ''}
+    </div>`;
+}
+
 function wireDashboard() {
+  const gib = $('#genInsightsBtn');
+  if (gib) gib.addEventListener('click', runInsights);
   $('#rows').addEventListener('change', e => {
     const sel = e.target.closest('select');
     if (sel) onEdit(sel.dataset.id, sel.dataset.field, sel.value);

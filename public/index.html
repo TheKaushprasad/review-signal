@@ -13,7 +13,7 @@
   <div class="wrap">
     <div class="bar">
       <div class="brand">
-        <div class="glyph">R</div>
+        <a href="/" class="glyph" title="Home" aria-label="Home">R</a>
         <div>
           <h1>Review Signal</h1>
           <p>Classified by <span id="engineName">Jev · TypeSafe AI</span></p>
@@ -100,6 +100,16 @@
         <span class="tag" id="engineTag">Jev</span>
         <span id="dashSubtitle"></span>
       </p>
+
+      <section class="card insights" id="insightsCard" hidden>
+        <header>
+          <h2>✨ AI Summary</h2>
+          <button class="btn-secondary" id="genInsightsBtn" type="button">Generate</button>
+        </header>
+        <div class="insights-body" id="insightsBody">
+          <p class="ins-hint">Generate an AI executive summary — top problems, what's dragging NPS, and recommended actions.</p>
+        </div>
+      </section>
 
       <div class="tiles" id="tiles"></div>
 

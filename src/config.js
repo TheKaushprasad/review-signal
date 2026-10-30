@@ -32,9 +32,17 @@ export const config = {
     anonKey: process.env.SUPABASE_ANON_KEY || '',       // browser-safe, served to the client
     serviceKey: process.env.SUPABASE_SERVICE_ROLE_KEY || '', // server-only, never sent to the client
   },
+
+  openai: {
+    // Powers the dataset-level AI Summary (Jev still does per-review labels).
+    apiKey: process.env.OPENAI_API_KEY || '',
+    model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+  },
 };
 
 export const sheetsEnabled = Boolean(config.google.credentialsPath || config.google.credentialsJson);
 export const jevConfigured = config.classifier === 'jev' && Boolean(config.jev.apiKey);
 // Auth + persistence are enabled only when the project URL and anon key are present.
 export const supabaseEnabled = Boolean(config.supabase.url && config.supabase.anonKey);
+// The AI Summary feature is available only when an OpenAI key is configured.
+export const openaiEnabled = Boolean(config.openai.apiKey);
