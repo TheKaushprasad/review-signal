@@ -1,7 +1,7 @@
 import { config } from '../config.js';
 import {
   JEV_QUESTIONS, NPS_SCORE, clampScore, confidenceToLikeliness,
-  normalizeSentiment, normalizeCategory,
+  normalizeSentiment, normalizeCategory, normalizeYesNo,
 } from './schema.js';
 
 // Adapter for Jev by TypeSafe AI — a typed-decision classification model.
@@ -75,8 +75,10 @@ async function classifyOne(review) {
   const likeliness = confidenceToLikeliness(a.sentiment?.confidence ?? 0.6);
   // NPS impact: map the chosen level label -> 1..5.
   const nps = clampScore(NPS_SCORE[a.nps_impact?.choice] ?? 3);
+  // Actionable feedback / suggestion?
+  const suggestion = normalizeYesNo(a.suggestion?.choice);
 
-  return { ...review, sentiment, category, likeliness, nps };
+  return { ...review, sentiment, category, likeliness, nps, suggestion };
 }
 
 // Simple concurrency-limited map.

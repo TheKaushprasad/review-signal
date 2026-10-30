@@ -53,11 +53,16 @@ function classifyOne(text) {
   // Churn-signal words push it to the top.
   if (/(refund|double charged|never came|crash|wasted|cancel|churn|uninstall)/.test(t)) nps = clampScore(nps + 1);
 
+  // Actionable suggestion / feedback?
+  const SUGGESTION_WORDS = ['please', 'add', 'should', 'wish', 'would be', 'suggest', 'need', 'want', 'could', 'option', 'allow', 'missing', 'hope', 'enable', 'provide', 'include', 'why not', 'fix', 'support'];
+  const suggestion = SUGGESTION_WORDS.some(w => t.includes(w)) ? 'yes' : 'no';
+
   return {
     sentiment,
     likeliness: confidenceToLikeliness(conf),
     category,
     nps: clampScore(nps),
+    suggestion,
   };
 }
 

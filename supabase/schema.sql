@@ -24,8 +24,12 @@ create table if not exists public.reviews (
   likeliness  int,
   category    text,
   nps         int,
+  suggestion  text,
   edited      boolean not null default false
 );
+
+-- Add the suggestion column to tables created before this field existed (safe to re-run).
+alter table public.reviews add column if not exists suggestion text;
 
 create index if not exists datasets_user_idx on public.datasets(user_id);
 create index if not exists reviews_dataset_idx on public.reviews(dataset_id);

@@ -57,7 +57,6 @@ async function boot() {
   insightsEnabled = Boolean(cfg.insights);
   const label = cfg.engine === 'jev' ? 'Jev · TypeSafe AI' : 'a built-in offline classifier';
   $('#engineName').textContent = label;
-  $('#engineTag').textContent = cfg.engine === 'jev' ? 'Jev' : 'Mock engine';
   await initAuth(cfg.supabase);
 }
 
@@ -263,10 +262,6 @@ function openDashboard(data) {
   chip.hidden = false;
   $('#sourceName').textContent = `${data.name} · ${data.reviews.length} reviews`;
   $('#syncAllBtn').hidden = data.source.type !== 'sheet';
-  const sub = data.source.type === 'sheet'
-    ? `${data.reviews.length} reviews classified from your Google Sheet. Edits sync back to column "${data.source.textColumn}"'s neighbours.`
-    : `${data.reviews.length} reviews classified from ${esc(data.name)}. Edit any chip — corrections update the metrics and the export.`;
-  $('#dashSubtitle').textContent = sub + (data.persisted ? ' · saved to your account' : '');
   if (data.saveError) toast('Classified, but saving to your account failed: ' + data.saveError, true);
   renderAll();
 }
@@ -276,7 +271,7 @@ function renderAll() { renderTiles(); renderCats(); renderNps(); renderTrends();
 // Low-confidence queue count + how much the user has had to correct the AI.
 function renderStats() {
   const rs = dataset.reviews;
-  const nr = rs.filter(r => r.likeliness <= 2).length;
+  const nr = rs.filter(r => r.likeliness <= 2 && !r.edited).length;  // unresolved low-confidence rows
   const edited = rs.filter(r => r.edited).length;
   const agree = rs.length ? Math.round((rs.length - edited) / rs.length * 100) : 100;
   const nrc = $('#nrCount'); if (nrc) nrc.textContent = nr;
@@ -336,10 +331,15 @@ function renderTiles() {
   $('#tiles').innerHTML = `
     <div class="tile"><div class="k">Reviews</div><div class="v mono">${rs.length}</div><div class="sub">classified</div></div>
     <div class="tile"><div class="k">Sentiment</div><div class="v mono">${pct(pos)}<small>% pos</small></div>
-      <div class="senti-split" title="${pos} positive · ${neu} neutral · ${neg} negative">
-        <span style="width:${pct(pos)}%;background:var(--pos)"></span>
-        <span style="width:${pct(neu)}%;background:var(--neu)"></span>
-        <span style="width:${pct(neg)}%;background:var(--neg)"></span></div></div>
+      <div class="senti-split" title="${pos} +ve · ${neu} neutral · ${neg} -ve">
+        <span data-s="positive" title="Positive" style="width:${pct(pos)}%;background:var(--pos)"></span>
+        <span data-s="neutral" title="Neutral" style="width:${pct(neu)}%;background:var(--neu)"></span>
+        <span data-s="negative" title="Negative" style="width:${pct(neg)}%;background:var(--neg)"></span></div>
+      <div class="senti-legend">
+        <button type="button" data-s="positive" class="sl pos ${filters.senti === 'positive' ? 'on' : ''}">+ve ${pos}</button>
+        <button type="button" data-s="neutral" class="sl neu ${filters.senti === 'neutral' ? 'on' : ''}">neutral ${neu}</button>
+        <button type="button" data-s="negative" class="sl neg ${filters.senti === 'negative' ? 'on' : ''}">-ve ${neg}</button>
+      </div></div>
     <div class="tile"><div class="k">Avg likeliness</div><div class="v mono">${avg('likeliness')}<small> / 5</small></div><div class="sub">classifier confidence</div></div>
     <div class="tile"><div class="k">Avg NPS impact</div><div class="v mono">${avg('nps')}<small> / 5</small></div><div class="sub">higher = more harmful</div></div>`;
 }
@@ -366,15 +366,15 @@ function renderNps() {
     <div class="lead"><span class="big mono">${overall}</span><span class="scale">/ 5 avg</span>
       <span class="label">Top drivers<br>${rows.slice(0, 3).map(r => r.cat).join(' · ') || '—'}</span></div>
     ${rows.map(r => `<div class="npsrow"><span class="nm">${r.cat}</span>
-      <span class="bar"><i style="width:${r.avg / 5 * 100}%"></i></span>
-      <span class="sc mono">${r.avg.toFixed(1)}</span></div>`).join('')}`;
+      <span class="bar"><i style="width:${r.avg / 5 * 100}%;background:${npsColor(Math.round(r.avg))[1]}"></i></span>
+      <span class="sc mono" style="color:${npsColor(Math.round(r.avg))[1]}">${r.avg.toFixed(1)}</span></div>`).join('')}`;
 }
 
 function visible() {
   let out = dataset.reviews.filter(r => {
     if (filters.senti !== 'all' && r.sentiment !== filters.senti) return false;
     if (filters.cat && r.category !== filters.cat) return false;
-    if (filters.needsReview && r.likeliness > 2) return false;
+    if (filters.needsReview && !(r.likeliness <= 2 && !r.edited)) return false;
     if (filters.q && !((r.text + ' ' + r.author).toLowerCase().includes(filters.q))) return false;
     return true;
   });
@@ -413,6 +413,7 @@ function renderRows() {
       <td>${catSelect(r)}</td>
       <td>${stars(r.likeliness)}</td>
       <td><span class="npsflag mono" style="background:${bg};color:${fg}">${r.nps}</span></td>
+      <td><span class="fb ${r.suggestion === 'yes' ? 'yes' : 'no'}">${r.suggestion === 'yes' ? 'Yes' : 'No'}</span></td>
     </tr>`;
   }).join('');
   renderPager(rows.length, start, pageRows.length, pages);
@@ -488,6 +489,15 @@ function renderInsights(x) {
     </div>`;
 }
 
+// Set the sentiment filter (from the tile legend / colour bar); toggles off
+// if the same one is clicked again. Keeps the toolbar segments in sync.
+function setSentiFilter(s) {
+  filters.senti = (filters.senti === s) ? 'all' : s;
+  filters.page = 0;
+  $$('#sentiSeg button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.s === filters.senti)));
+  renderAll();
+}
+
 function wireDashboard() {
   const gib = $('#genInsightsBtn');
   if (gib) gib.addEventListener('click', runInsights);
@@ -499,7 +509,17 @@ function wireDashboard() {
     const b = e.target.closest('button'); if (!b) return;
     filters.senti = b.dataset.s; filters.page = 0;
     [...e.currentTarget.children].forEach(x => x.setAttribute('aria-pressed', x === b));
-    renderRows();
+    renderAll();
+  });
+  // Click a colour segment or legend chip in the Sentiment tile to filter.
+  $('#tiles').addEventListener('click', e => {
+    const el = e.target.closest('[data-s]');
+    if (el) setSentiFilter(el.dataset.s);
+  });
+  const catSel = $('#catSel');
+  if (catSel) catSel.addEventListener('change', e => {
+    filters.cat = e.target.value || null; filters.page = 0;
+    renderCats(); renderRows();
   });
   $('#searchInput').addEventListener('input', e => { filters.q = e.target.value.toLowerCase().trim(); filters.page = 0; renderRows(); });
   $('#sortSel').addEventListener('change', e => { filters.sort = e.target.value; filters.page = 0; renderRows(); });
@@ -511,7 +531,11 @@ function wireDashboard() {
     if (b.id === 'pgPrev') filters.page--; else if (b.id === 'pgNext') filters.page++;
     renderRows();
   });
-  const toggleCat = c => { filters.cat = filters.cat === c ? null : c; filters.page = 0; renderCats(); renderRows(); };
+  const toggleCat = c => {
+    filters.cat = filters.cat === c ? null : c; filters.page = 0;
+    const cs = $('#catSel'); if (cs) cs.value = filters.cat || '';
+    renderCats(); renderRows();
+  };
   $('#catPanel').addEventListener('click', e => { const row = e.target.closest('.catrow'); if (row) toggleCat(row.dataset.cat); });
   $('#catPanel').addEventListener('keydown', e => {
     if (e.key !== 'Enter' && e.key !== ' ') return;

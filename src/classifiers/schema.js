@@ -43,6 +43,12 @@ const NPS_CRITERIA = {
 
 export const NPS_SCORE = { negligible: 1, minor: 2, moderate: 3, high: 4, severe: 5 };
 
+// Does the review contain an actionable suggestion / feedback the team could act on?
+const SUGGESTION_CRITERIA = {
+  yes: 'Contains a concrete suggestion, feature request, or an actionable complaint the team could do something about.',
+  no: 'No actionable suggestion — just a rating, praise, or a vague remark.',
+};
+
 export const JEV_QUESTIONS = {
   sentiment: {
     type: 'choice',
@@ -58,6 +64,11 @@ export const JEV_QUESTIONS = {
     type: 'choice',
     instructions: "Rate how much this review threatens the product's Net Promoter Score.",
     criteria: NPS_CRITERIA,
+  },
+  suggestion: {
+    type: 'choice',
+    instructions: 'Does this review contain a concrete suggestion or actionable feedback?',
+    criteria: SUGGESTION_CRITERIA,
   },
 };
 
@@ -76,6 +87,11 @@ export function normalizeSentiment(s) {
 export function normalizeCategory(c) {
   c = String(c || '').trim();
   return CATEGORIES.includes(c) ? c : 'Other';
+}
+
+export function normalizeYesNo(v) {
+  v = String(v || '').toLowerCase().trim();
+  return (v === 'yes' || v === 'y' || v === 'true') ? 'yes' : 'no';
 }
 
 // Confidence (0..1) -> likeliness (1..5).

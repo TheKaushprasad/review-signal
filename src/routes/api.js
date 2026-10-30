@@ -274,8 +274,8 @@ function serializeDataset(ds, extra) {
     engine: activeEngine(),
     persisted: Boolean(ds.persisted),
     source,
-    reviews: ds.reviews.map(({ id, rowNumber, author, date, text, sentiment, likeliness, category, nps, edited }) =>
-      ({ id, rowNumber, author, date, text, sentiment, likeliness, category, nps, edited: Boolean(edited) })),
+    reviews: ds.reviews.map(({ id, rowNumber, author, date, text, sentiment, likeliness, category, nps, suggestion, edited }) =>
+      ({ id, rowNumber, author, date, text, sentiment, likeliness, category, nps, suggestion: suggestion || 'no', edited: Boolean(edited) })),
     ...extra,
   };
 }

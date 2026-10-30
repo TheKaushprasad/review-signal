@@ -69,6 +69,7 @@ test('mock classifier: every field is valid and in range', async () => {
     assert.ok(CATEGORIES.includes(r.category), `category ${r.category}`);
     assert.ok(r.likeliness >= 1 && r.likeliness <= 5);
     assert.ok(r.nps >= 1 && r.nps <= 5);
+    assert.ok(['yes', 'no'].includes(r.suggestion), `suggestion ${r.suggestion}`);
   }
   assert.equal(out[0].sentiment, 'negative');
   assert.equal(out[1].sentiment, 'positive');

@@ -23,6 +23,7 @@ export async function saveDataset(accessToken, userId, { name, engine, source, r
     row_number: r.rowNumber ?? null,
     author: r.author || '', date: r.date || '', text: r.text,
     sentiment: r.sentiment, likeliness: r.likeliness, category: r.category, nps: r.nps,
+    suggestion: r.suggestion || 'no',
     edited: Boolean(r.edited),
   }));
   // Insert in chunks so very large sheets don't hit payload limits.
@@ -58,6 +59,7 @@ export async function loadDataset(accessToken, id) {
     reviews: (reviews || []).map(r => ({
       id: r.id, rowNumber: r.row_number, author: r.author, date: r.date, text: r.text,
       sentiment: r.sentiment, likeliness: r.likeliness, category: r.category, nps: r.nps,
+      suggestion: r.suggestion || 'no',
       edited: Boolean(r.edited),
     })),
   };
