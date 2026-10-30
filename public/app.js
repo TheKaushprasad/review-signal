@@ -42,6 +42,12 @@ function npsColor(n) {
   if (n === 3) return ['var(--neu-soft)', 'var(--neu)'];
   return ['var(--pos-soft)', 'var(--pos)'];
 }
+// Severity colour for the NPS-impact bars/values: red (harmful) → amber → green.
+function npsBarColor(avg) {
+  if (avg >= 3.5) return 'var(--neg)';
+  if (avg >= 2.5) return 'var(--neu)';
+  return 'var(--pos)';
+}
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 /* ---------- config + auth ---------- */
@@ -255,8 +261,11 @@ function openDashboard(data) {
   const ic = $('#insightsCard');
   if (ic) {
     ic.hidden = !insightsEnabled;
-    $('#insightsBody').innerHTML = `<p class="ins-hint">Generate an AI executive summary — top problems, what's dragging NPS, and recommended actions.</p>`;
+    const body = $('#insightsBody');
+    body.hidden = false;
+    body.innerHTML = `<p class="ins-hint">Generate an AI executive summary — top problems, what's dragging NPS, and recommended actions.</p>`;
     const gib = $('#genInsightsBtn'); if (gib) gib.textContent = 'Generate';
+    const icol = $('#insCollapse'); if (icol) { icol.textContent = '▾'; icol.setAttribute('aria-expanded', 'true'); }
   }
   const chip = $('#sourceChip');
   chip.hidden = false;
@@ -328,18 +337,17 @@ function renderTiles() {
   const pos = c('positive'), neu = c('neutral'), neg = c('negative');
   const pct = n => Math.round(n / total * 100);
   const avg = k => (rs.reduce((a, r) => a + r[k], 0) / total).toFixed(1);
+  // Headline % follows the selected sentiment colour.
+  const sSel = filters.senti;
+  const sPct = sSel === 'neutral' ? pct(neu) : sSel === 'negative' ? pct(neg) : pct(pos);
+  const sLabel = sSel === 'neutral' ? 'neutral' : sSel === 'negative' ? '-ve' : sSel === 'positive' ? '+ve' : 'pos';
   $('#tiles').innerHTML = `
     <div class="tile"><div class="k">Reviews</div><div class="v mono">${rs.length}</div><div class="sub">classified</div></div>
-    <div class="tile"><div class="k">Sentiment</div><div class="v mono">${pct(pos)}<small>% pos</small></div>
-      <div class="senti-split" title="${pos} +ve · ${neu} neutral · ${neg} -ve">
-        <span data-s="positive" title="Positive" style="width:${pct(pos)}%;background:var(--pos)"></span>
-        <span data-s="neutral" title="Neutral" style="width:${pct(neu)}%;background:var(--neu)"></span>
-        <span data-s="negative" title="Negative" style="width:${pct(neg)}%;background:var(--neg)"></span></div>
-      <div class="senti-legend">
-        <button type="button" data-s="positive" class="sl pos ${filters.senti === 'positive' ? 'on' : ''}">+ve ${pos}</button>
-        <button type="button" data-s="neutral" class="sl neu ${filters.senti === 'neutral' ? 'on' : ''}">neutral ${neu}</button>
-        <button type="button" data-s="negative" class="sl neg ${filters.senti === 'negative' ? 'on' : ''}">-ve ${neg}</button>
-      </div></div>
+    <div class="tile"><div class="k">Sentiment</div><div class="v mono">${sPct}<small>% ${sLabel}</small></div>
+      <div class="senti-split" title="Click a colour to filter: green = +ve, amber = neutral, red = -ve">
+        <span data-s="positive" title="Positive — ${pct(pos)}% (+ve)" class="${sSel === 'positive' ? 'sel' : ''}" style="width:${Math.max(pct(pos), pos ? 6 : 0)}%;background:var(--pos)"></span>
+        <span data-s="neutral" title="Neutral — ${pct(neu)}%" class="${sSel === 'neutral' ? 'sel' : ''}" style="width:${Math.max(pct(neu), neu ? 6 : 0)}%;background:var(--neu)"></span>
+        <span data-s="negative" title="Negative — ${pct(neg)}% (-ve)" class="${sSel === 'negative' ? 'sel' : ''}" style="width:${Math.max(pct(neg), neg ? 6 : 0)}%;background:var(--neg)"></span></div></div>
     <div class="tile"><div class="k">Avg likeliness</div><div class="v mono">${avg('likeliness')}<small> / 5</small></div><div class="sub">classifier confidence</div></div>
     <div class="tile"><div class="k">Avg NPS impact</div><div class="v mono">${avg('nps')}<small> / 5</small></div><div class="sub">higher = more harmful</div></div>`;
 }
@@ -366,8 +374,8 @@ function renderNps() {
     <div class="lead"><span class="big mono">${overall}</span><span class="scale">/ 5 avg</span>
       <span class="label">Top drivers<br>${rows.slice(0, 3).map(r => r.cat).join(' · ') || '—'}</span></div>
     ${rows.map(r => `<div class="npsrow"><span class="nm">${r.cat}</span>
-      <span class="bar"><i style="width:${r.avg / 5 * 100}%;background:${npsColor(Math.round(r.avg))[1]}"></i></span>
-      <span class="sc mono" style="color:${npsColor(Math.round(r.avg))[1]}">${r.avg.toFixed(1)}</span></div>`).join('')}`;
+      <span class="npsbar"><span class="npsbar-fill" style="width:${Math.max(r.avg / 5 * 100, 4)}%;background:${npsBarColor(r.avg)}"></span></span>
+      <span class="sc mono" style="color:${npsBarColor(r.avg)}">${r.avg.toFixed(1)}</span></div>`).join('')}`;
 }
 
 function visible() {
@@ -501,6 +509,13 @@ function setSentiFilter(s) {
 function wireDashboard() {
   const gib = $('#genInsightsBtn');
   if (gib) gib.addEventListener('click', runInsights);
+  const insCol = $('#insCollapse');
+  if (insCol) insCol.addEventListener('click', () => {
+    const body = $('#insightsBody');
+    body.hidden = !body.hidden;
+    insCol.textContent = body.hidden ? '▸' : '▾';
+    insCol.setAttribute('aria-expanded', String(!body.hidden));
+  });
   $('#rows').addEventListener('change', e => {
     const sel = e.target.closest('select');
     if (sel) onEdit(sel.dataset.id, sel.dataset.field, sel.value);

@@ -99,7 +99,10 @@
       <section class="card insights" id="insightsCard" hidden>
         <header>
           <h2>✨ AI Summary</h2>
-          <button class="btn-secondary" id="genInsightsBtn" type="button">Generate</button>
+          <div class="ins-actions">
+            <button class="btn-secondary" id="genInsightsBtn" type="button">Generate</button>
+            <button class="ins-collapse" id="insCollapse" type="button" aria-expanded="true" aria-label="Collapse summary">▾</button>
+          </div>
         </header>
         <div class="insights-body" id="insightsBody">
           <p class="ins-hint">Generate an AI executive summary — top problems, what's dragging NPS, and recommended actions.</p>

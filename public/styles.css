@@ -368,3 +368,13 @@ a.glyph:hover { filter: brightness(1.08); }
 .ins-probs p { font-size: 12.5px; color: var(--fg-soft); margin: 3px 0 0; line-height: 1.5; }
 .ins-cat { font-size: 10.5px; background: var(--accent-soft); color: var(--accent); border-radius: 5px; padding: 1px 7px; font-weight: 600; }
 .ins-recs { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--fg-soft); line-height: 1.5; }
+.ins-actions { display: flex; align-items: center; gap: 8px; }
+.ins-collapse { font-family: inherit; font-size: 13px; cursor: pointer; background: var(--surface-2); color: var(--fg-soft); border: 1px solid var(--line); border-radius: 8px; width: 30px; height: 30px; line-height: 1; }
+.ins-collapse:hover { color: var(--fg); border-color: var(--line-strong); }
+
+/* NPS-impact bars — filled + colour-coded by severity */
+.npsbar { flex: 1; height: 10px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.npsbar-fill { display: block; height: 100%; border-radius: 6px; transition: width .4s ease; }
+
+/* Sentiment colour bar: clickable, dim the unselected when one is chosen */
+.senti-split:has(.sel) span:not(.sel) { opacity: .38; }
