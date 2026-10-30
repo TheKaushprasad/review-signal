@@ -42,22 +42,11 @@
             AI-Powered Review Analysis
           </span>
           <h2 class="headline">Turn a sheet of reviews into<br><span class="accent">a decision-ready dashboard</span></h2>
-          <p class="subcopy">Upload a CSV or connect a Google Sheet. Every review is classified for
+          <p class="subcopy">Upload a CSV of your reviews and every one is classified for
             sentiment, category, classifier confidence, and NPS impact — then opened
-            in an editable dashboard that writes your corrections back to the source.</p>
+            in an editable dashboard you can correct and export.</p>
 
-          <div class="tabs" role="tablist">
-            <button role="tab" aria-selected="true" data-tab="csv">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
-              Upload CSV
-            </button>
-            <button role="tab" aria-selected="false" data-tab="sheet">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M4 9h16M4 15h16M10 3v18"/></svg>
-              Google Sheet
-            </button>
-          </div>
-
-          <div class="card panel" data-panel="csv">
+          <div class="card panel">
             <div class="drop" id="drop">
               <input type="file" id="fileInput" accept=".csv,text/csv" hidden>
               <span class="drop-icon">
@@ -67,33 +56,11 @@
               <p class="drop-sub">or click to <span class="link">browse</span></p>
               <p class="drop-note">One review per row. We'll auto-detect the review-text column.</p>
             </div>
-            <div class="orline"><span>or</span></div>
-            <button class="connect-row" id="gotoSheet" type="button">
-              <span class="cr-icon">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M4 9h16M4 15h16M10 3v18"/></svg>
-              </span>
-              <span class="cr-text"><b>Connect Google Sheet</b><small>Load data directly from your Google Sheet</small></span>
-              <span class="cr-arrow">›</span>
-            </button>
-          </div>
-
-          <div class="card panel" data-panel="sheet" hidden>
-            <div class="field">
-              <label for="sheetId">Google Sheet ID or URL</label>
-              <input id="sheetId" type="text" placeholder="1AbC…xyz  or  https://docs.google.com/spreadsheets/d/…/edit">
-            </div>
-            <div class="field">
-              <label for="sheetTab">Tab name <span class="muted">(optional — defaults to first tab)</span></label>
-              <input id="sheetTab" type="text" placeholder="Sheet1">
-            </div>
-            <label class="checkrow"><input type="checkbox" id="writeBack" checked> Write classification columns back to the sheet</label>
-            <button class="btn" id="loadSheetBtn" type="button">Classify sheet</button>
-            <p class="muted sheetnote" id="sheetNote"></p>
           </div>
 
           <p class="connect-foot">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg>
-            Works with CSV files (1,000s of rows) and Google Sheets · <button class="linklike" id="sampleBtn" type="button">try the sample dataset</button>
+            Works with CSV files (1,000s of rows) · <button class="linklike" id="sampleBtn" type="button">try the sample dataset</button>
           </p>
           <p class="feedback" id="connectMsg" hidden></p>
         </div>

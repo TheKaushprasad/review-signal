@@ -56,10 +56,6 @@ async function boot() {
   const label = cfg.engine === 'jev' ? 'Jev · TypeSafe AI' : 'a built-in offline classifier';
   $('#engineName').textContent = label;
   $('#engineTag').textContent = cfg.engine === 'jev' ? 'Jev' : 'Mock engine';
-  if (!cfg.sheetsEnabled) {
-    $('#sheetNote').textContent = 'Server note: Google Sheets is not configured yet, so sheet loading is disabled. Set GOOGLE_APPLICATION_CREDENTIALS to enable it. CSV upload works now.';
-    $('#loadSheetBtn').disabled = true;
-  }
   await initAuth(cfg.supabase);
 }
 
@@ -173,19 +169,8 @@ function wireAuth() {
   });
 }
 
-/* ---------- connect view ---------- */
-function parseSheetId(v) {
-  v = v.trim();
-  const m = v.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
-  return m ? m[1] : v;
-}
-
+/* ---------- connect view (CSV upload) ---------- */
 function wireConnect() {
-  $$('.tabs button').forEach(b => b.addEventListener('click', () => {
-    $$('.tabs button').forEach(x => x.setAttribute('aria-selected', x === b));
-    $$('.panel').forEach(p => { p.hidden = p.dataset.panel !== b.dataset.tab; });
-  }));
-
   const drop = $('#drop'), fileInput = $('#fileInput');
   drop.addEventListener('click', () => fileInput.click());
   fileInput.addEventListener('change', () => { if (fileInput.files[0]) ingestFile(fileInput.files[0]); });
@@ -194,15 +179,6 @@ function wireConnect() {
   drop.addEventListener('drop', ev => { const f = ev.dataTransfer.files[0]; if (f) ingestFile(f); });
 
   $('#sampleBtn').addEventListener('click', loadSample);
-  $('#loadSheetBtn').addEventListener('click', loadSheet);
-
-  // "Connect Google Sheet" shortcut row switches to the Google Sheet tab.
-  const gotoSheet = $('#gotoSheet');
-  if (gotoSheet) gotoSheet.addEventListener('click', () => {
-    const btn = document.querySelector('.tabs button[data-tab="sheet"]');
-    if (btn) btn.click();
-    const id = $('#sheetId'); if (id) id.focus();
-  });
 }
 
 function connectMsg(msg, ok) {
@@ -266,23 +242,6 @@ async function loadSample() {
     const content = await fetch('sample-reviews.csv').then(r => r.text());
     await ingestCSV(content, 'Sample app reviews');
   } catch (err) { connectMsg('Could not load the sample dataset.', false); hideLoading(); }
-}
-
-async function loadSheet() {
-  const id = parseSheetId($('#sheetId').value);
-  if (!id) return connectMsg('Paste a Google Sheet ID or URL first.', false);
-  connectMsg('', true);
-  showLoading('Reading sheet…');
-  try {
-    const data = await runPipeline({
-      kind: 'sheet', spreadsheetId: id,
-      sheetName: $('#sheetTab').value.trim() || undefined,
-      writeBack: $('#writeBack').checked,
-    });
-    openDashboard(data);
-    if (data.wroteBack) toast('Classifications written to the sheet');
-  } catch (err) { connectMsg(err.message, false); }
-  finally { hideLoading(); }
 }
 
 /* ---------- dashboard ---------- */
