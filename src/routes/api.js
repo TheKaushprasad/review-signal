@@ -100,7 +100,7 @@ router.post('/datasets/prepare', async (req, res) => {
       if (!content) return res.status(400).json({ error: 'Missing CSV content.' });
       const { headers, records } = csvToRecords(content);
       if (!headers.length) return res.status(400).json({ error: 'Could not read any columns from the CSV.' });
-      const col = textColumn && headers.includes(textColumn) ? textColumn : guessTextColumn(headers);
+      const col = textColumn && headers.includes(textColumn) ? textColumn : guessTextColumn(headers, records);
       const rows = records.map((record, i) => ({ rowNumber: i + 2, record }));
       const reviews = buildReviews(headers, rows, col);
       if (!reviews.length) return res.status(400).json({ error: `No non-empty reviews found in column "${col}".` });
@@ -114,7 +114,7 @@ router.post('/datasets/prepare', async (req, res) => {
       const { spreadsheetId, sheetName, textColumn, writeBack = true } = req.body;
       if (!spreadsheetId) return res.status(400).json({ error: 'Missing spreadsheetId.' });
       const { sheetName: resolved, headers, rows } = await readSheet(spreadsheetId, sheetName);
-      const col = textColumn && headers.includes(textColumn) ? textColumn : guessTextColumn(headers);
+      const col = textColumn && headers.includes(textColumn) ? textColumn : guessTextColumn(headers, rows.map(r => r.record));
       const reviews = buildReviews(headers, rows, col);
       if (!reviews.length) return res.status(400).json({ error: `No non-empty reviews found in column "${col}".` });
       const classStartColIndex = findClassBlock(headers);

@@ -60,12 +60,39 @@ export function recordsToCSV(headers, records) {
   return lines.join('\r\n');
 }
 
-// Pick the most likely free-text review column from a set of headers.
-export function guessTextColumn(headers) {
-  const prefer = ['review', 'comment', 'feedback', 'text', 'body', 'message', 'content', 'response'];
-  const lower = headers.map(h => h.toLowerCase());
+// Pick the most likely free-text review column. Uses the header name AND the
+// cell contents, so it won't mistake an author column like "Reviewer" (which
+// contains the substring "review") for the actual "Review" text column.
+export function guessTextColumn(headers, records = []) {
+  const prefer = ['review', 'comment', 'feedback', 'text', 'body', 'message', 'content', 'response', 'description'];
+  const metaish = ['reviewer', 'author', 'name', 'user', 'username', 'customer', 'email', 'id', 'rating', 'ratings', 'score', 'stars', 'date', 'time', 'timestamp'];
+  const lower = headers.map(h => String(h).toLowerCase().trim());
+
+  // 1. An exact keyword header ("Review") always wins over a lookalike ("Reviewer").
   for (const p of prefer) {
-    const i = lower.findIndex(h => h.includes(p));
+    const i = lower.indexOf(p);
+    if (i !== -1) return headers[i];
+  }
+
+  // 2. Content-based: the review column holds the longest free text. Skip
+  //    numeric columns and short meta columns; give review-keyword headers a nudge.
+  if (records.length) {
+    let best = null, bestScore = -1;
+    headers.forEach((h, idx) => {
+      const vals = records.map(r => String(r[h] ?? '')).filter(v => v.trim() !== '');
+      if (!vals.length) return;
+      if (vals.every(v => /^-?\d+(\.\d+)?$/.test(v.trim()))) return; // numeric column (e.g. Rating)
+      const avgLen = vals.reduce((a, v) => a + v.length, 0) / vals.length;
+      let score = avgLen;
+      if (prefer.some(p => lower[idx].includes(p)) && !metaish.includes(lower[idx])) score += 1000;
+      if (score > bestScore) { bestScore = score; best = h; }
+    });
+    if (best) return best;
+  }
+
+  // 3. Substring match, but never an obvious meta column.
+  for (const p of prefer) {
+    const i = lower.findIndex(h => h.includes(p) && !metaish.includes(h));
     if (i !== -1) return headers[i];
   }
   return headers[0];

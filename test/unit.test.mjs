@@ -27,6 +27,18 @@ test('csv: guessTextColumn prefers review-like headers', () => {
   assert.equal(guessTextColumn(['foo', 'bar']), 'foo');
 });
 
+test('csv: guessTextColumn picks "Review" over lookalike "Reviewer"', () => {
+  const headers = ['Reviewer', 'Rating (1-5)', 'Review'];
+  const records = [{ 'Reviewer': 'Aditya K.', 'Rating (1-5)': '1', 'Review': 'The app crashes every time I open a quiz.' }];
+  assert.equal(guessTextColumn(headers, records), 'Review');
+});
+
+test('csv: guessTextColumn falls back to the longest-text column by content', () => {
+  const headers = ['who', 'stars', 'notes'];
+  const records = [{ who: 'Al', stars: '5', notes: 'A long detailed note about the product experience here.' }];
+  assert.equal(guessTextColumn(headers, records), 'notes');
+});
+
 test('schema: sentiment + category normalize to known values', () => {
   assert.equal(normalizeSentiment('POSITIVE'), 'positive');
   assert.equal(normalizeSentiment('whatever'), 'neutral');
