@@ -68,7 +68,7 @@ router.post('/insights', limitInsights, async (req, res) => {
     res.json({ insights });
   } catch (err) {
     console.error('insights error:', err);
-    res.status(500).json({ error: err.message || 'Could not generate the summary.' });
+    res.status(500).json({ error: 'Could not generate the summary. Please try again.' });
   }
 });
 
@@ -137,7 +137,7 @@ router.post('/datasets/prepare', limitPrepare, async (req, res) => {
     return res.status(400).json({ error: 'kind must be "csv" or "sheet".' });
   } catch (err) {
     console.error('prepare error:', err);
-    res.status(500).json({ error: err.message || 'Could not read the input.' });
+    res.status(500).json({ error: 'Could not read the input. Check the file and try again.' });
   }
 });
 
@@ -153,7 +153,7 @@ router.post('/classify', limitClassify, async (req, res) => {
     res.json({ reviews: out });
   } catch (err) {
     console.error('classify error:', err);
-    res.status(500).json({ error: err.message || 'Classification failed.' });
+    res.status(500).json({ error: 'Classification failed. Please try again.' });
   }
 });
 
@@ -175,7 +175,7 @@ router.post('/datasets/commit', async (req, res) => {
     return finishDataset(req, res, { name, source, reviews, wroteBack });
   } catch (err) {
     console.error('commit error:', err);
-    res.status(500).json({ error: err.message || 'Could not save the dataset.' });
+    res.status(500).json({ error: 'Could not save the dataset. Please try again.' });
   }
 });
 
@@ -201,7 +201,8 @@ router.get('/my/datasets', requireAuth, async (req, res) => {
   try {
     res.json({ datasets: await listDatasets(req.accessToken) });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('my/datasets error:', err);
+    res.status(500).json({ error: 'Could not load your datasets.' });
   }
 });
 
@@ -210,7 +211,8 @@ router.delete('/my/datasets/:id', requireAuth, async (req, res) => {
     await deleteDataset(req.accessToken, req.params.id);
     res.json({ deleted: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('delete dataset error:', err);
+    res.status(500).json({ error: 'Could not delete that dataset.' });
   }
 });
 
@@ -263,7 +265,8 @@ router.post('/datasets/:id/writeback', async (req, res) => {
     const result = await writeAllClassification(source.spreadsheetId, source.sheetName, source.classStartColIndex, reviews || []);
     res.json({ synced: true, ...result });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('writeback error:', err);
+    res.status(500).json({ error: 'Could not write to the sheet.' });
   }
 });
 
