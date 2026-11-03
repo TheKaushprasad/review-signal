@@ -6,6 +6,14 @@ import { saveDataset, loadDataset, listDatasets, updateReviewDb, deleteDataset }
 import { sheetsEnabled, supabaseEnabled, openaiEnabled, config } from '../config.js';
 import { requireAuth } from '../lib/auth.js';
 import { generateInsights } from '../lib/insights.js';
+import { rateLimit } from '../lib/ratelimit.js';
+
+// Per-IP throttles on the endpoints that spend money (Jev / OpenAI / Sheets).
+const limitClassify = rateLimit({ max: 40, windowMs: 60000 });
+const limitInsights = rateLimit({ max: 8, windowMs: 60000, message: 'AI Summary is rate-limited — try again in a minute.' });
+const limitPrepare = rateLimit({ max: 20, windowMs: 60000 });
+
+const MAX_TEXT = 4000; // cap per-review text sent to the model (cost guard)
 import {
   readSheet, writeAllClassification, writeOneClassification, CLASS_HEADERS,
 } from '../sheets/sheets.js';
@@ -53,7 +61,7 @@ router.get('/config', (req, res) => {
 
 // Dataset-level AI Summary (OpenAI). Stateless: the client sends the classified
 // reviews; one model call returns a decision-ready summary.
-router.post('/insights', async (req, res) => {
+router.post('/insights', limitInsights, async (req, res) => {
   if (!openaiEnabled) return res.status(501).json({ error: 'AI Summary is not enabled on this server (no OpenAI key).' });
   try {
     const insights = await generateInsights(req.body?.reviews);
@@ -91,7 +99,7 @@ async function finishDataset(req, res, { name, source, reviews, wroteBack }) {
 
 // 1) Parse the CSV / read the sheet and return UNCLASSIFIED reviews + source.
 //    Fast: no model calls.
-router.post('/datasets/prepare', async (req, res) => {
+router.post('/datasets/prepare', limitPrepare, async (req, res) => {
   try {
     const { kind } = req.body;
 
@@ -134,12 +142,14 @@ router.post('/datasets/prepare', async (req, res) => {
 });
 
 // 2) Classify ONE batch of reviews. The client calls this repeatedly with chunks.
-router.post('/classify', async (req, res) => {
+router.post('/classify', limitClassify, async (req, res) => {
   try {
     const reviews = Array.isArray(req.body?.reviews) ? req.body.reviews : [];
     if (!reviews.length) return res.json({ reviews: [] });
     if (reviews.length > 50) return res.status(400).json({ error: 'Batch too large (max 50 reviews).' });
-    const out = await classifyReviews(reviews);
+    // Cap text length per review so a crafted payload can't run up model cost.
+    const capped = reviews.map(r => ({ ...r, text: String(r.text ?? '').slice(0, MAX_TEXT) }));
+    const out = await classifyReviews(capped);
     res.json({ reviews: out });
   } catch (err) {
     console.error('classify error:', err);
